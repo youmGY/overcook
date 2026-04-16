@@ -157,12 +157,12 @@ class Game:
                     "contents": list(st.pot_items), "cooked": True}
                 st.pot_items = []; st.pot_cooked = False
                 st.pot_cooking = False; st.pot_prog = 0.0
-                st.pot_on = False; st.pot_burn = 0.0
+                st.pot_on = False; st.pot_burn = 0.0; st.pot_burned = False
                 self._pop(self.player.x, self.player.y - 20, "Picked!", C["green"])
             elif not h and burned:
                 st.pot_items = []; st.pot_cooked = False
                 st.pot_cooking = False; st.pot_prog = 0.0
-                st.pot_on = False; st.pot_burn = 0.0
+                st.pot_on = False; st.pot_burn = 0.0; st.pot_burned = False
                 self._pop(st.cx(), st.y - 14, "Burned! Cleared.", C["burn"])
             elif not h and st.pot_cooking:
                 self._pop(st.cx(), st.y - 14, "Cooking...", C["white"])
@@ -175,13 +175,11 @@ class Game:
                     self._pop(st.cx(), st.y - 14, "Plated!", C["lime"])
                 else:
                     self._pop(st.cx(), st.y - 14, "Plate occupied!", C["red"])
-            elif not h and st.plate_item:
-                self.player.holding = dict(st.plate_item)
-                st.plate_item = None
-                self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
             elif h and h.get("burned"):
                 self.player.holding = None
                 self._pop(self.player.x, self.player.y - 20, "Burned food discarded", C["burn"])
+            elif not h and st.plate_item:
+                self._pop(st.cx(), st.y - 14, "Submit at Submit station!", C["white"])
             return
 
         if st.kind == "submit":
@@ -264,7 +262,7 @@ class Game:
             if h and h.get("cooked") and not h.get("burned"):
                 return "Action: Place on plate" if not st.plate_item else "Action: Plate occupied!"
             if not h and st.plate_item:
-                return "Action: Pick up plate"
+                return "Go to Submit station to submit"
         if k == "submit":
             plate_st = next((s for s in self.stations if s.kind == "plate" and s.plate_item), None)
             return "Action: Submit dish!" if plate_st else "Action: No plated dish"
