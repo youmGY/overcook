@@ -522,8 +522,6 @@ def main():
     game = Game()
 
     held = {"left": False, "right": False}
-    rep  = {"left": {"t": 0, "active": False}, "right": {"t": 0, "active": False}}
-    RD, RI = 0.25, 0.09
 
     mpressed = False
     overlay_click = None
@@ -539,9 +537,9 @@ def main():
                 pygame.quit(); sys.exit()
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_LEFT, pygame.K_a):
-                    held["left"] = True; rep["left"] = {"t": 0, "active": False}
+                    held["left"] = True
                 if event.key in (pygame.K_RIGHT, pygame.K_d):
-                    held["right"] = True; rep["right"] = {"t": 0, "active": False}
+                    held["right"] = True
                 if event.key in (pygame.K_z, pygame.K_SPACE):
                     if game.state == "play": action_now = True
                     elif game.state in ("title", "over"):
@@ -573,13 +571,8 @@ def main():
                 mpressed = False
 
         move_dir = 0
-        for k, d in (("left", -1), ("right", 1)):
-            if held[k]:
-                rep[k]["t"] += dt
-                delay = RD if not rep[k]["active"] else RI
-                if rep[k]["t"] >= delay:
-                    move_dir = d
-                    rep[k]["t"] = 0; rep[k]["active"] = True
+        if held["left"]:   move_dir = -1
+        elif held["right"]: move_dir = 1
 
         mpos = pygame.mouse.get_pos()
         game.update(dt, move_dir, action_now, mpos, mpressed, overlay_click)

@@ -185,8 +185,7 @@ class Player:
             self.vx = move_dir * SPEED
             self.facing = move_dir
         else:
-            self.vx *= 0.55 ** dt
-            if abs(self.vx) < 2: self.vx = 0
+            self.vx = 0
 
         self.vy += GRAV * dt
         self.x  += self.vx * dt
