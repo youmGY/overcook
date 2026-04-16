@@ -27,6 +27,7 @@ class Station:
         self.pot_cooked  = False
         self.pot_burn    = 0.0
         self.pot_on      = False
+        self.pot_burned  = False
 
         self.plate_item  = None
 
@@ -60,7 +61,8 @@ class Station:
                     events.append("cook_done")
             elif self.pot_cooked and self.pot_items:
                 self.pot_burn += dt
-                if self.pot_burn >= BURN_TIME:
+                if self.pot_burn >= BURN_TIME and not self.pot_burned:
+                    self.pot_burned = True
                     events.append("burned")
 
         return events
@@ -74,7 +76,9 @@ class Station:
             base, top = C["pot_base"], C["pot_on"] if self.pot_on else C["pot_off"]
         elif self.kind == "trash":
             base, top = C["trash_base"], C["trash_top"]
-        else:
+        elif self.kind == "submit":
+            base, top = C["submit_base"], C["submit_top"]
+        else:  # plate
             base, top = C["plate_base"], C["plate_top"]
 
         rr(surf, base, (self.x + 8, self.y + self.h, self.w - 16, gy - self.y - self.h), 2)
@@ -88,11 +92,13 @@ class Station:
         self._draw_icon(surf, ix, iy)
 
     def _station_label(self):
-        if self.kind == "ing":   return "Pantry"
-        if self.kind == "chop":  return "Chop"
-        if self.kind == "pot":   return "Stove"
-        if self.kind == "trash": return "Trash"
-        return "Plate / Submit"
+        if self.kind == "ing":    return "Pantry"
+        if self.kind == "chop":   return "Chop"
+        if self.kind == "pot":    return "Stove"
+        if self.kind == "trash":  return "Trash"
+        if self.kind == "plate":  return "Plate"
+        if self.kind == "submit": return "Submit"
+        return ""
 
     def _draw_icon(self, surf, ix, iy):
         if self.kind == "ing":
@@ -147,16 +153,18 @@ class Station:
                     pygame.draw.polygon(surf, (255, 210, 0),
                         [(fx, fy + 7), (fx - 3, fy + 2), (fx, fy - 2), (fx + 3, fy + 2)])
 
-        else:  # plate_submit
-            pygame.draw.circle(surf, (200, 195, 180), (ix - 18, iy), 11)
-            pygame.draw.circle(surf, (160, 155, 140), (ix - 18, iy), 11, 1)
-            if self.plate_item:
-                pygame.draw.circle(surf, C["green"], (ix - 10, iy - 9), 5)
-                s = F[12].render("Plated", True, C["lime"])
-                surf.blit(s, (ix - 18 - s.get_width() // 2, iy + 6))
-
-            rr(surf, C["submit_top"], (ix + 4, iy - 9, 22, 16), 3)
-            pygame.draw.line(surf, (255, 255, 255, 100), (ix + 4, iy - 3), (ix + 26, iy - 3), 1)
+        elif self.kind in ("plate", "submit"):
+            # plate circle
+            pygame.draw.circle(surf, (200, 195, 180), (ix, iy), 11)
+            pygame.draw.circle(surf, (160, 155, 140), (ix, iy), 11, 1)
+            if self.kind == "plate":
+                if self.plate_item:
+                    pygame.draw.circle(surf, C["green"], (ix + 8, iy - 9), 5)
+                    s = F[12].render("Plated", True, C["lime"])
+                    surf.blit(s, (ix - s.get_width() // 2, iy + 6))
+            else:  # submit
+                rr(surf, C["submit_top"], (ix - 10, iy - 9, 22, 16), 3)
+                pygame.draw.line(surf, (255, 255, 255, 100), (ix - 10, iy - 3), (ix + 12, iy - 3), 1)
 
         if self.kind == "trash":
             rr(surf, C["trash_top"], (ix - 10, iy - 8, 20, 17), 3)

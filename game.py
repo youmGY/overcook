@@ -32,7 +32,7 @@ class Game:
         self.score = 0
         self.timer = GAME_TIME
         self.orders = []; self.popups = []
-        self.elapsed = 0.0; self.next_order = 0.0
+        self.elapsed = 0.0; self.next_order = 15.0
         self._build_level()
         gw, gh = screen.get_size()
         gy = self._gy()
@@ -43,19 +43,19 @@ class Game:
 
     def _gy(self):
         _, gh = screen.get_size()
-        return gh - 80
+        return gh - gh // 4
 
     def _build_level(self):
         gw, gh = screen.get_size()
         gy = self._gy()
         self.gw, self.gh = gw, gh
 
-        N   = 6
+        N   = 8
         pad = 20
         gap = (gw - 2 * pad - N * Station.SW) // (N - 1)
         sy  = gy - Station.SH - 36
 
-        kinds = ["trash", "ing", "chop", "pot", "pot", "plate_submit"]
+        kinds = ["trash", "ing", "chop", "chop", "pot", "pot", "plate", "submit"]
         self.stations = []
         for i, k in enumerate(kinds):
             sx = pad + i * (Station.SW + gap)
@@ -71,13 +71,15 @@ class Game:
 
     def _make_btns(self):
         gw, gh = screen.get_size()
-        bh, bw = 52, 90
-        y = gh - bh - 10
+        gy = self._gy()
+        bh = gh - gy - 20
+        bw = 90
+        y = gy + 10
         self.btn_left   = Btn(10,          y, bw, bh, "◀ Left",   (40, 80, 40))
         self.btn_right  = Btn(10 + bw + 8, y, bw, bh, "Right ▶",  (40, 80, 40))
         self.btn_action = Btn(gw - bw - 10,     y, bw, bh, "Action",   (80, 40, 40))
         self.btn_recipe = Btn(gw - bw * 2 - 18, y, bw, bh, "Recipe R", (50, 50, 100))
-        self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 70, 110, bh, "Start", (50, 50, 130))
+        self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 70, 110, 52, "Start", (50, 50, 130))
 
     # ── station interaction ───────────────────
     def _near(self):
@@ -166,7 +168,7 @@ class Game:
                 self._pop(st.cx(), st.y - 14, "Cooking...", C["white"])
             return
 
-        if st.kind == "plate_submit":
+        if st.kind == "plate":
             if h and h.get("cooked") and not h.get("burned"):
                 if not st.plate_item:
                     st.plate_item = dict(h); self.player.holding = None
@@ -174,26 +176,36 @@ class Game:
                 else:
                     self._pop(st.cx(), st.y - 14, "Plate occupied!", C["red"])
             elif not h and st.plate_item:
-                dish = st.plate_item
-                h_ids = sorted(c["id"] for c in dish["contents"])
-                matched = None
-                for o in self.orders:
-                    if o.status != "active": continue
-                    if sorted(o.recipe["needs"]) == h_ids:
-                        matched = o; break
-                if matched:
-                    bonus = int(matched.t / ORDER_TIME * 50)
-                    pts = matched.recipe["pts"] + bonus
-                    self.score += pts
-                    matched.status = "done"
-                    st.plate_item = None
-                    self._pop(st.cx(), st.y - 30, f"+{pts} pts! 🎉", C["green"])
-                else:
-                    self._pop(st.cx(), st.y - 14, "No matching order!", C["red"])
-                    st.plate_item = None
+                self.player.holding = dict(st.plate_item)
+                st.plate_item = None
+                self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
             elif h and h.get("burned"):
                 self.player.holding = None
                 self._pop(self.player.x, self.player.y - 20, "Burned food discarded", C["burn"])
+            return
+
+        if st.kind == "submit":
+            plate_st = next((s for s in self.stations if s.kind == "plate" and s.plate_item), None)
+            if not plate_st:
+                self._pop(st.cx(), st.y - 14, "Nothing plated!", C["red"])
+                return
+            dish = plate_st.plate_item
+            h_ids = sorted(c["id"] for c in dish["contents"])
+            matched = None
+            for o in self.orders:
+                if o.status != "active": continue
+                if sorted(o.recipe["needs"]) == h_ids:
+                    matched = o; break
+            if matched:
+                bonus = int(matched.t / ORDER_TIME * 50)
+                pts = matched.recipe["pts"] + bonus
+                self.score += pts
+                matched.status = "done"
+                plate_st.plate_item = None
+                self._pop(st.cx(), st.y - 30, f"+{pts} pts! 🎉", C["green"])
+            else:
+                self._pop(st.cx(), st.y - 14, "No matching order!", C["red"])
+                plate_st.plate_item = None
             return
 
         if st.kind == "trash":
@@ -201,10 +213,11 @@ class Game:
                 self.player.holding = None
                 self._pop(st.cx(), st.y - 14, "Trashed!", C["pink"])
             else:
-                chop = next((s for s in self.stations if s.kind == "chop"), None)
-                if chop and chop.chop_item:
-                    chop.chop_item = None; chop.chop_prog = 0.0; chop.chopping = False
-                    self._pop(st.cx(), st.y - 14, "Chop board cleared", C["pink"])
+                chops = [s for s in self.stations if s.kind == "chop" and s.chop_item]
+                if chops:
+                    for chop in chops:
+                        chop.chop_item = None; chop.chop_prog = 0.0; chop.chopping = False
+                    self._pop(st.cx(), st.y - 14, "Chop boards cleared", C["pink"])
                 else:
                     self._pop(st.cx(), st.y - 14, "Nothing to trash", C["white"])
             return
@@ -247,14 +260,17 @@ class Game:
             if not h and st.pot_items and not st.pot_cooking and not st.pot_cooked:
                 return "Action: Turn on fire 🔥"
             if not h and st.pot_cooked: return "Action: Pick cooked dish"
-        if k == "plate_submit":
+        if k == "plate":
             if h and h.get("cooked") and not h.get("burned"):
-                return "Action: Place on plate"
+                return "Action: Place on plate" if not st.plate_item else "Action: Plate occupied!"
             if not h and st.plate_item:
-                return "Action: Submit dish!"
+                return "Action: Pick up plate"
+        if k == "submit":
+            plate_st = next((s for s in self.stations if s.kind == "plate" and s.plate_item), None)
+            return "Action: Submit dish!" if plate_st else "Action: No plated dish"
         if k == "trash":
             if h: return "Action: Trash item"
-            return "Action: Clear chop board"
+            return "Action: Clear chop boards"
         return ""
 
     # ── update ───────────────────────────────
