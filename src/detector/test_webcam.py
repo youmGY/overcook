@@ -120,10 +120,14 @@ def print_debug(dbg: dict, output: Gesture) -> None:
     if dbg.get("thumb_ratio") is not None:
         lines.append(f"  thumb_ratio={dbg['thumb_ratio']}  (release: < 0.6)")
 
+    grab_dist_str = dbg.get("grab_dist")
+    lines.append(
+        f"  grab_dist={grab_dist_str}(grab: <{0.20})  "
+        f"wrist_speed={dbg.get('wrist_speed','?')}(grab block>{0.012})"
+    )
     lines.append(
         f"  chop osc={dbg['chop_osc']}  y_amp={dbg['y_amp']}  |  "
         f"stir osc={dbg['stir_osc']}  x_amp={dbg['x_amp']}  "
-        f"wrist_speed={dbg.get('wrist_speed','?')}(grab block>{0.012})  "
         f"cooldown={dbg['cooldown']}  hold={dbg['hold_counter']}"
     )
     lines.append(f"  raw={dbg['raw']}  ->  output={output.value}")

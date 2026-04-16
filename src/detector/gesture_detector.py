@@ -85,11 +85,8 @@ class GestureDetector:
     # Release: |엄지 x 차| / |손목 x 차| 비율 최대값 (엄지끼리 가장 가까움)
     THUMB_DIST_RATIO: float = 0.6      # 0.5 → 0.6: 약간 더 넉넉하게
 
-    # Grab: shoulder-elbow-wrist 각도 최대값 (이 값 미만이면 팔이 굽혀진 상태)
-    ELBOW_ANGLE_MAX: float = 155.0     # 145 → 155: 팔꿈치가 많이 펴진 경우도 허용
-
-    # 동적 제스처 슬라이딩 윈도우 프레임 수 (~1.5초 @ 30fps)
-    BUFFER_SIZE: int = 45
+    # 동적 제스처 슬라이딩 윈도우 프레임 수 (~1초 @ 30fps)
+    BUFFER_SIZE: int = 30              # 45→30: 버퍼 초기화 후 빠른 재감지
 
     # 방향 전환 최소 횟수 (chop/stir 판정 기준)
     OSCILLATION_MIN: int = 2
@@ -101,7 +98,7 @@ class GestureDetector:
     AXIS_DOMINANCE: float = 1.5
 
     # 정적 제스처 감지 후 동적 제스처 비활성화 프레임 수
-    STATIC_COOLDOWN: int = 12
+    STATIC_COOLDOWN: int = 8           # 12→8: 빠른 복귀
 
     # 제스처 Hold: idle로 바뀌기 전 이전 제스처를 유지하는 프레임 수 (토글 방지)
     HOLD_FRAMES: int = 8
@@ -109,6 +106,14 @@ class GestureDetector:
     # Grab: 손목 속도가 이 값 초과이면 grab 판정 안 함 (chop/stir 중 grab 오감지 방지)
     # 정규화 좌표 단위 / 프레임. chop은 보통 0.01~0.03, grab은 < 0.005
     GRAB_SPEED_MAX: float = 0.012
+
+    # Grab: 두 손목 사이 최대 정규화 거리 (두 손이 맞닿아야 grab)
+    # 값은 카메라-사용자 거리에 따라 달라짐 → --debug 모드에서 grab_dist 수치 확인 후 튜닝
+    # 전형적: 손 맞닿음 ≈ 0.05~0.15, 양 어깨 폭 ≈ 0.3~0.5
+    GRAB_DIST_MAX: float = 0.20
+
+    # Grab: 손이 겹쳐서 MediaPipe가 한 손을 놓쳤을 때 보완하는 캐시 유지 프레임 수
+    HAND_CACHE_MAX: int = 4
 
     def __init__(
         self,
@@ -124,7 +129,20 @@ class GestureDetector:
         # 손목 좌표 슬라이딩 윈도우 (동적 제스처용)
         self._wy: collections.deque[float] = collections.deque(maxlen=self.BUFFER_SIZE)
         self._wx: collections.deque[float] = collections.deque(maxlen=self.BUFFER_SIZE)
-        self._wrist_speed: float = 0.0  # 직전 프레임 대비 손목 이동량
+
+        # 손목 속도 추적 (두 손 각각, grab 오감지 방지)
+        self._wrist_speed: float = 0.0
+        self._rh_speed: float = 0.0
+        self._lh_speed: float = 0.0
+        self._prev_rw: Optional[tuple] = None   # 직전 프레임 오른손 손목 (x, y)
+        self._prev_lw: Optional[tuple] = None   # 직전 프레임 왼손 손목 (x, y)
+
+        # 손 랜드마크 캐시 (grab 시 겹침으로 인한 MediaPipe 손 loss 보완)
+        self._lh_cache = None
+        self._rh_cache = None
+        self._lh_age: int = 999   # 마지막으로 본 이후 경과 프레임
+        self._rh_age: int = 999
+
         self._cooldown: int = 0
         # 제스처 Hold (토글 방지)
         self._hold_counter: int = 0
@@ -158,20 +176,55 @@ class GestureDetector:
         rh: Optional[object] = r.right_hand_landmarks
         pose: Optional[object] = r.pose_landmarks
 
-        # 손목 좌표 버퍼 갱신 (오른손 우선, 없으면 왼손)
+        # 손목 좌표 버퍼 갱신 (오른손 우선, 없으면 왼손) — chop/stir 감지용
         ref_hand = rh if rh else lh
         if ref_hand:
             w = ref_hand.landmark[WRIST]
             self._wy.append(w.y)
             self._wx.append(w.x)
 
-        # 손목 속도: 직전 프레임 대비 x/y 이동량 (grab 오감지 방지에 사용)
-        if len(self._wy) >= 2:
-            dy = abs(float(self._wy[-1]) - float(self._wy[-2]))
-            dx = abs(float(self._wx[-1]) - float(self._wx[-2]))
-            self._wrist_speed = max(dx, dy)
+        # 손목 속도 추적 (두 손 각각) — grab 오감지 방지
+        if rh:
+            rw_lm = rh.landmark[WRIST]
+            if self._prev_rw is not None:
+                self._rh_speed = max(
+                    abs(rw_lm.x - self._prev_rw[0]),
+                    abs(rw_lm.y - self._prev_rw[1]))
+            self._prev_rw = (rw_lm.x, rw_lm.y)
         else:
-            self._wrist_speed = 0.0
+            self._rh_speed = 0.0
+            self._prev_rw = None
+
+        if lh:
+            lw_lm = lh.landmark[WRIST]
+            if self._prev_lw is not None:
+                self._lh_speed = max(
+                    abs(lw_lm.x - self._prev_lw[0]),
+                    abs(lw_lm.y - self._prev_lw[1]))
+            self._prev_lw = (lw_lm.x, lw_lm.y)
+        else:
+            self._lh_speed = 0.0
+            self._prev_lw = None
+
+        self._wrist_speed = max(self._rh_speed, self._lh_speed)
+
+        # 손 랜드마크 캐시 갱신 (grab 시 두 손 겹침으로 한 손 loss 보완용)
+        if lh:
+            self._lh_cache = lh
+            self._lh_age = 0
+        else:
+            self._lh_age += 1
+        if rh:
+            self._rh_cache = rh
+            self._rh_age = 0
+        else:
+            self._rh_age += 1
+
+        # grab 판정에 사용할 손: 현재 프레임 우선, 없으면 캐시 (최대 HAND_CACHE_MAX 프레임)
+        lh_grab = lh if lh else (
+            self._lh_cache if self._lh_age <= self.HAND_CACHE_MAX else None)
+        rh_grab = rh if rh else (
+            self._rh_cache if self._rh_age <= self.HAND_CACHE_MAX else None)
 
         if self._cooldown > 0:
             self._cooldown -= 1
@@ -222,13 +275,20 @@ class GestureDetector:
         dbg["y_amp"]       = round(_amplitude(self._wy), 3)
         dbg["x_amp"]       = round(_amplitude(self._wx), 3)
         dbg["wrist_speed"] = round(self._wrist_speed, 4)   # grab 차단 임계값: GRAB_SPEED_MAX
+
+        # 두 손목 사이 거리 (grab 판정 핵심 — grab_dist < GRAB_DIST_MAX 이면 grab 가능)
+        if lh_grab and rh_grab:
+            lw_g = lh_grab.landmark[WRIST]; rw_g = rh_grab.landmark[WRIST]
+            dbg["grab_dist"] = round(
+                float(np.sqrt((lw_g.x - rw_g.x)**2 + (lw_g.y - rw_g.y)**2)), 3)
+        else:
+            dbg["grab_dist"] = None
+
         dbg["cooldown"]    = self._cooldown
 
         # ── 정적 제스처 판정 ──────────────────────────────────────────────
         raw = Gesture.IDLE
-        if rh and self._is_grab(rh, "Right", pose):
-            raw = Gesture.GRAB
-        elif lh and self._is_grab(lh, "Left", pose):
+        if lh_grab and rh_grab and self._is_grab(lh_grab, rh_grab):
             raw = Gesture.GRAB
         elif lh and rh and self._is_release(lh, rh):
             raw = Gesture.RELEASE
@@ -322,53 +382,39 @@ class GestureDetector:
         return bgr_frame
 
     # ── Grab 판정 ───────────────────────────────────────────────────────────
-    def _is_grab(self, hand_lm, handedness: str, pose_lm) -> bool:
+    def _is_grab(self, lh_lm, rh_lm) -> bool:
         """
-        Grab 판정 기준:
+        Grab 판정 기준 (양손 맞닿음 방식):
 
-        0. **손목 속도 체크 (chop/stir 중 오감지 방지)**
-           - 손목이 빠르게 움직이는 중(chop/stir 동작)에는 grab 판정하지 않음
-           - self._wrist_speed > GRAB_SPEED_MAX 이면 False 반환
-           - 이유: chop 동작 중 손가락이 살짝 말려도 grab으로 오감지되면
-             버퍼가 초기화되어 chop 감지가 끊김
+        0. **손목 속도 체크** — 빠른 손 움직임(chop/stir) 중에는 판정 안 함
+           두 손 중 최대 속도가 GRAB_SPEED_MAX 초과 시 False
 
-        1. **손가락 말림 (orientation-independent)**
-           - TIP-WRIST 3D 거리 / MCP-WRIST 3D 거리 비율 < CURL_RATIO
-           - 비율이 낮을수록 손가락 끝이 손목 쪽으로 말려 있음을 의미
-           - 검지~소지 4개 중 3개 이상 말려야 함
+        1. **양손 손가락 말림** — 두 손 모두 3개 이상 말린 손가락
+           TIP-WRIST / MCP-WRIST 비율 < CURL_RATIO (방향 무관)
 
-        2. **팔꿈치 굽힘 + 손목이 위에 위치**
-           - 포즈 랜드마크에서 shoulder→elbow→wrist 각도 < ELBOW_ANGLE_MAX
-             (팔이 굽혀져 팔+주먹이 삼각형을 이루는 구조)
-           - 손목 y < 팔꿈치 y (화면에서 손목이 팔꿈치보다 위에 위치)
+        2. **두 손이 맞닿음** — 손목 간 거리 < GRAB_DIST_MAX
+           --debug 모드의 grab_dist 수치를 보고 GRAB_DIST_MAX 튜닝 권장
+           (카메라-사용자 거리에 따라 0.10~0.25 범위)
         """
-        # 손이 빠르게 움직이는 중이면 grab 판정 안 함 (chop/stir 간섭 방지)
+        # 빠른 손 움직임 중이면 grab 판정 안 함
         if self._wrist_speed > self.GRAB_SPEED_MAX:
             return False
 
-        lm = hand_lm.landmark
-        curled = sum(
-            1 for tip_idx, mcp_idx in FINGER_TIP_MCP
-            if _tip_ratio(lm, tip_idx, mcp_idx) < self.CURL_RATIO
-        )
-        if curled < 3:
-            return False
-
-        if pose_lm:
-            sh_idx = RIGHT_SHOULDER if handedness == "Right" else LEFT_SHOULDER
-            el_idx = RIGHT_ELBOW    if handedness == "Right" else LEFT_ELBOW
-            wr_idx = RIGHT_WRIST_P  if handedness == "Right" else LEFT_WRIST_P
-
-            plm = pose_lm.landmark
-            # 팔꿈치보다 손목이 화면 위에 있어야 함 (y 좌표가 작아야 함)
-            if plm[wr_idx].y >= plm[el_idx].y:
-                return False
-            # 팔꿈치 굽힘 각도 확인 (삼각형 형성)
-            angle = _joint_angle(plm, sh_idx, el_idx, wr_idx)
-            if angle >= self.ELBOW_ANGLE_MAX:
+        # 양손 모두 손가락이 말려야 함
+        for hand_lm in (lh_lm, rh_lm):
+            lm = hand_lm.landmark
+            curled = sum(
+                1 for tip_idx, mcp_idx in FINGER_TIP_MCP
+                if _tip_ratio(lm, tip_idx, mcp_idx) < self.CURL_RATIO
+            )
+            if curled < 3:
                 return False
 
-        return True
+        # 두 손목 거리 (맞닿음 확인)
+        lw = lh_lm.landmark[WRIST]
+        rw = rh_lm.landmark[WRIST]
+        dist = float(np.sqrt((lw.x - rw.x) ** 2 + (lw.y - rw.y) ** 2))
+        return dist < self.GRAB_DIST_MAX
 
     # ── Release 판정 ────────────────────────────────────────────────────────
     def _is_release(self, lh_lm, rh_lm) -> bool:
