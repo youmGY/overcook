@@ -124,7 +124,7 @@ class RecipeOverlay:
 
         txt(surf, "colored dot = ingredient   * = needs chopping   Cook = use stove",
             12, (130, 130, 170), px + PW // 2, py + PH - 20)
-        txt(surf, "Press R to close", 12, (100, 100, 150), px + PW // 2, py + PH - 6)
+        # txt(surf, "Press R to close", 12, (100, 100, 150), px + PW // 2, py + PH - 6)
 
 
 class IngredientOverlay:
