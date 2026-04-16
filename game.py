@@ -54,7 +54,6 @@ class GameInput:
     move_to_slot: Optional[int] = None   # 1-5 (finger_1 ~ finger_5)
     chop:         bool = False           # chop_motion
     stir:         bool = False           # stir_motion
-    pick_up:      bool = False           # hands_together
     put_down:     bool = False           # palms_down
     confirm:      bool = False           # thumbs_up
     # ── keyboard / button fallback ───────────
@@ -126,7 +125,6 @@ class Game:
         ("confirm",  "✓ OK",      (60, 120, 60)),
         ("chop",     "Chop!",     (120, 80, 30)),
         ("stir",     "Stir!",     (30, 80, 120)),
-        ("pick_up",  "Pick Up",   (80, 60, 120)),
         ("pause",    "⏸ Pause",   (80, 60, 80)),
     ]
 
@@ -378,9 +376,11 @@ class Game:
                     f"(base={matched.recipe['pts']} bonus={bonus}) score={self.score}"
                 )
         else:
-            self._pop(st.cx(), st.y - 14, "No matching order!", C["red"])
+            penalty = 30
+            self.score = max(0, self.score - penalty)
+            self._pop(st.cx(), st.y - 14, f"No order! -{penalty} pts", C["red"])
             self._clear_submit_source(from_holding)
-            log.warning(f"SUBMIT_FAIL: no matching order for {h_ids}")
+            log.warning(f"SUBMIT_FAIL: no matching order for {h_ids}, penalty={penalty} score={self.score}")
 
     def _act_trash(self, st):
         h = self.player.holding
@@ -523,7 +523,6 @@ class Game:
             "confirm":  gi.confirm  or gi.action,
             "chop":     gi.chop,
             "stir":     gi.stir,
-            "pick_up":  gi.pick_up,
             "pause":    False,
         }
         for i, (key, _, _c) in enumerate(self._ACT_BTN_INFO):
@@ -564,7 +563,7 @@ class Game:
                 except Exception:
                     log.exception("_act_pot crashed")
                 handled = True
-        if any(act_flags[k] for k in ("confirm", "pick_up")) and not handled:
+        if act_flags["confirm"] and not handled:
             try:
                 self.do_action()
             except Exception:
@@ -849,8 +848,6 @@ def main():
                     _gi_frame["chop"] = True          # chop_motion
                 if event.key == pygame.K_v and game.state == "play":
                     _gi_frame["stir"] = True           # stir_motion
-                if event.key == pygame.K_f and game.state == "play":
-                    _gi_frame["pick_up"] = True        # hands_together
                 if event.key == pygame.K_g and game.state == "play":
                     _gi_frame["put_down"] = True       # palms_down
                 if event.key == pygame.K_r:
@@ -893,7 +890,6 @@ def main():
             confirm      = _gi_frame.get("confirm",  False),
             chop         = _gi_frame.get("chop",     False),
             stir         = _gi_frame.get("stir",     False),
-            pick_up      = _gi_frame.get("pick_up",  False),
             put_down     = _gi_frame.get("put_down", False),
             overlay_click= overlay_click,
         )

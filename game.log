@@ -604,3 +604,101 @@
 17:00:09 [INFO] ORDER_SPAWN: Mushroom Stir-fry
 17:00:19 [WARNING] ORDER_FAIL: recipe=Rice Bowl score=0
 17:00:24 [INFO] ORDER_SPAWN: Veg Curry
+17:00:39 [INFO] ORDER_SPAWN: Rice Bowl
+17:01:04 [WARNING] ORDER_FAIL: recipe=Mushroom Stir-fry score=0
+17:01:09 [INFO] ORDER_SPAWN: Tomato Soup
+17:01:19 [WARNING] ORDER_FAIL: recipe=Veg Curry score=0
+17:01:24 [INFO] ORDER_SPAWN: Mushroom Stir-fry
+17:01:34 [WARNING] ORDER_FAIL: recipe=Rice Bowl score=0
+17:01:39 [INFO] ORDER_SPAWN: Veg Curry
+17:01:54 [INFO] COOK_DONE
+17:01:57 [WARNING] SUBMIT_FAIL: no matching order for ['tomato_c']
+17:02:04 [WARNING] ORDER_FAIL: recipe=Tomato Soup score=0
+17:02:08 [INFO] PICK_ING: tomato
+17:02:09 [INFO] ORDER_SPAWN: Rice Bowl
+17:02:11 [INFO] CHOP_DONE: tomato_c
+17:02:17 [INFO] COOK_DONE
+17:02:19 [WARNING] ORDER_FAIL: recipe=Mushroom Stir-fry score=0
+17:02:24 [INFO] ORDER_SPAWN: Fried Rice
+17:02:34 [WARNING] ORDER_FAIL: recipe=Veg Curry score=0
+17:02:39 [INFO] ORDER_SPAWN: Carrot Soup
+17:03:04 [WARNING] ORDER_FAIL: recipe=Rice Bowl score=0
+17:03:09 [INFO] GAME_OVER: final_score=0
+17:03:11 [INFO] --- GAME RESET ---
+17:03:11 [INFO] ORDER_SPAWN: Rice Bowl
+17:03:11 [INFO] ORDER_SPAWN: Mushroom Stir-fry
+17:03:29 [INFO] PICK_ING: rice
+17:03:30 [INFO] ORDER_SPAWN: Carrot Soup
+17:03:43 [INFO] PICK_ING: mushroom
+17:03:51 [INFO] CHOP_DONE: mushroom_c
+17:04:01 [INFO] COOK_DONE
+17:04:07 [INFO] SUBMIT_OK: recipe=Rice Bowl pts=99 (base=95 bonus=4) score=99
+17:04:13 [WARNING] ORDER_FAIL: recipe=Mushroom Stir-fry score=69
+17:04:18 [INFO] ORDER_SPAWN: Veg Curry
+17:04:25 [INFO] --- GAME RESET ---
+17:04:25 [INFO] ORDER_SPAWN: Mushroom Stir-fry
+17:04:25 [INFO] ORDER_SPAWN: Mushroom Stir-fry
+17:04:40 [INFO] ORDER_SPAWN: Fried Rice
+17:05:03 [INFO] PICK_ING: mushroom
+17:05:14 [INFO] CHOP_DONE: mushroom_c
+17:05:26 [WARNING] ORDER_FAIL: recipe=Mushroom Stir-fry score=0
+17:05:26 [WARNING] ORDER_FAIL: recipe=Mushroom Stir-fry score=0
+17:05:32 [INFO] ORDER_SPAWN: Mushroom Stir-fry
+17:05:42 [WARNING] ORDER_FAIL: recipe=Fried Rice score=0
+17:05:43 [INFO] COOK_DONE
+17:05:47 [INFO] ORDER_SPAWN: Carrot Soup
+17:05:49 [WARNING] POT_BURNED: over-stirred
+17:06:02 [INFO] ORDER_SPAWN: Veg Salad
+17:06:27 [WARNING] ORDER_FAIL: recipe=Mushroom Stir-fry score=0
+17:06:32 [INFO] ORDER_SPAWN: Carrot Soup
+17:06:42 [WARNING] ORDER_FAIL: recipe=Carrot Soup score=0
+17:06:47 [INFO] ORDER_SPAWN: Veg Salad
+17:06:50 [WARNING] SUBMIT_FAIL: no matching order for ['mushroom_c']
+17:06:57 [WARNING] ORDER_FAIL: recipe=Veg Salad score=0
+17:07:02 [INFO] ORDER_SPAWN: Rice Bowl
+17:07:27 [WARNING] ORDER_FAIL: recipe=Carrot Soup score=0
+17:07:32 [INFO] ORDER_SPAWN: Mushroom Stir-fry
+17:07:42 [WARNING] ORDER_FAIL: recipe=Veg Salad score=0
+17:07:47 [INFO] ORDER_SPAWN: Fried Rice
+17:07:57 [WARNING] ORDER_FAIL: recipe=Rice Bowl score=0
+17:08:02 [INFO] ORDER_SPAWN: Tomato Soup
+17:08:27 [WARNING] ORDER_FAIL: recipe=Mushroom Stir-fry score=0
+17:08:32 [INFO] GAME_OVER: final_score=0
+17:08:49 [INFO] --- GAME RESET ---
+17:08:49 [INFO] ORDER_SPAWN: Rice Bowl
+17:08:49 [INFO] ORDER_SPAWN: Fried Rice
+17:09:04 [INFO] ORDER_SPAWN: Fried Rice
+17:09:44 [WARNING] ORDER_FAIL: recipe=Rice Bowl score=0
+17:09:44 [WARNING] ORDER_FAIL: recipe=Fried Rice score=0
+17:09:49 [INFO] ORDER_SPAWN: Veg Curry
+17:09:59 [WARNING] ORDER_FAIL: recipe=Fried Rice score=0
+17:10:04 [INFO] ORDER_SPAWN: Carrot Soup
+17:10:19 [INFO] ORDER_SPAWN: Mushroom Stir-fry
+17:10:44 [WARNING] ORDER_FAIL: recipe=Veg Curry score=0
+17:10:49 [INFO] ORDER_SPAWN: Rice Bowl
+17:10:59 [WARNING] ORDER_FAIL: recipe=Carrot Soup score=0
+17:11:04 [INFO] ORDER_SPAWN: Mushroom Stir-fry
+17:11:11 [INFO] --- GAME RESET ---
+17:11:13 [INFO] --- GAME RESET ---
+17:11:13 [INFO] ORDER_SPAWN: Carrot Soup
+17:11:13 [INFO] ORDER_SPAWN: Mushroom Stir-fry
+17:11:19 [INFO] PICK_ING: tomato
+17:11:24 [INFO] CHOP_DONE: tomato_c
+17:11:29 [INFO] ORDER_SPAWN: Veg Curry
+17:11:42 [INFO] COOK_DONE
+17:11:48 [WARNING] SUBMIT_FAIL: no matching order for ['tomato_c'], penalty=30 score=0
+17:11:57 [INFO] PICK_ING: tomato
+17:11:59 [INFO] CHOP_DONE: tomato_c
+17:12:05 [INFO] COOK_DONE
+17:12:09 [WARNING] SUBMIT_FAIL: no matching order for ['tomato_c'], penalty=30 score=0
+17:12:10 [WARNING] ORDER_FAIL: recipe=Carrot Soup score=0
+17:12:10 [WARNING] ORDER_FAIL: recipe=Mushroom Stir-fry score=0
+17:12:15 [INFO] ORDER_SPAWN: Carrot Soup
+17:12:20 [INFO] PICK_ING: tomato
+17:12:26 [WARNING] ORDER_FAIL: recipe=Veg Curry score=0
+17:12:30 [INFO] CHOP_DONE: tomato_c
+17:12:31 [INFO] ORDER_SPAWN: Fried Rice
+17:12:34 [INFO] COOK_DONE
+17:12:37 [WARNING] POT_BURNED: over-stirred
+17:12:40 [WARNING] SUBMIT_FAIL: no matching order for ['tomato_c'], penalty=30 score=0
+17:12:47 [INFO] ORDER_SPAWN: Fried Rice
