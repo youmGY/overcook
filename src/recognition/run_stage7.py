@@ -31,7 +31,16 @@ def main() -> None:
     )
 
     print("[Stage7] Started. Press 'q' to quit.")
-    last_combine_t = 0.0
+    flash_text = ""
+    flash_until = 0.0
+
+    MOTION_TO_KOREAN = {
+        "chop_motion": "CHOP",
+        "stir_motion": "STIR",
+        "hands_together": "PICK UP",   # 집기
+        "palms_down": "DROP",          # 놓기
+        "thumbs_up": "COMPLETE!",      # 완성
+    }
 
     try:
         while True:
@@ -65,14 +74,17 @@ def main() -> None:
                 if not hi.stale:
                     cv2.circle(frame, (px, py), 6, color, -1, cv2.LINE_AA)
 
-            # Global "COMBINE!" flash on hands_together
+            # Global event flash
             now = perf_counter()
-            if any(hi.motion == "hands_together" for hi in inputs):
-                last_combine_t = now
-            if now - last_combine_t < 0.6:
+            for hi in inputs:
+                if hi.motion in ("hands_together", "palms_down", "thumbs_up"):
+                    flash_text = MOTION_TO_KOREAN.get(hi.motion, hi.motion)
+                    flash_until = now + 0.6
+                    break
+            if now < flash_until and flash_text:
                 cv2.putText(
-                    frame, "COMBINE!", (fw // 2 - 110, fh // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 165, 255), 4, cv2.LINE_AA,
+                    frame, flash_text, (fw // 2 - 140, fh // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 165, 255), 4, cv2.LINE_AA,
                 )
 
             # FPS

@@ -1,4 +1,16 @@
-"""Chop / stir / hands-together motion detection."""
+"""Chop / stir / hands-together / palms-down motion detection.
+
+Semantic mapping (see copilot-plan.md):
+
+    chop_motion      : 썰기    (single hand, wrist up-down vs elbow)
+    stir_motion      : 조리    (single hand, wrist left-right vs elbow)
+    hands_together   : 집기    (both wrists close together, held N frames)
+    palms_down       : 놓기    (both hands 5-extended, palm-down, held N frames)
+
+완성 is the per-frame ``thumbs_up`` gesture and is handled in
+[gesture.py](gesture.py) / [interface.py](interface.py); it does not flow
+through this detector.
+"""
 from __future__ import annotations
 
 from collections import deque
@@ -12,6 +24,7 @@ from .pose_tracker import Joint
 MOTION_CHOP = "chop_motion"
 MOTION_STIR = "stir_motion"
 MOTION_HANDS_TOGETHER = "hands_together"
+MOTION_PALMS_DOWN = "palms_down"
 
 _WINDOW_SECONDS = 0.6
 _MIN_REVERSALS = 3
@@ -21,6 +34,17 @@ _COOLDOWN_S = 0.3
 
 _HANDS_TOGETHER_DIST = 0.12
 _HANDS_TOGETHER_FRAMES = 8
+
+_PALMS_DOWN_FRAMES = 6
+
+
+@dataclass
+class HandFlags:
+    """Per-hand snapshot used to gate motion detection."""
+
+    present: bool = False       # hand is currently tracked
+    all5_extended: bool = False  # all five fingers detected as extended
+    fingers_up: bool = False     # fingertips clearly above wrist
 
 
 @dataclass
@@ -62,10 +86,12 @@ def _reversals_and_peak_speed(
 
 
 class MotionDetector:
-    """Detect chop/stir per hand and hands-together across both hands.
+    """Detect chop/stir per hand, plus hands_together and palms_down events.
 
-    Chop/stir are only reported when the corresponding hand is in "fist" gesture
-    state (passed by caller) to reduce false positives.
+    ``hand_flags`` passed to :meth:`update` lets the detector recognise
+    palms_down (both hands have all five fingers extended but are NOT
+    pointing up). This is how we disambiguate ``finger_5`` (movement
+    command) from 놓기 (both palms facing downward).
     """
 
     def __init__(self) -> None:
@@ -75,19 +101,25 @@ class MotionDetector:
         }
         self._together_streak = 0
         self._last_together_t = 0.0
+        self._palms_down_streak = 0
+        self._last_palms_down_t = 0.0
 
     def update(
         self,
         joints: Dict[str, Joint],
-        fist_flags: Dict[str, bool],
+        hand_flags: Dict[str, HandFlags],
         now: Optional[float] = None,
     ) -> Dict[str, Tuple[Optional[str], float]]:
-        """Feed pose joints + per-hand fist flags. Return motion events per hand.
+        """Feed pose joints + per-hand flag snapshot. Return motion events.
 
         Returns:
             mapping {"left": (label_or_None, confidence),
                      "right": (...),
-                     "both": (hands_together_or_None, conf)}
+                     "both": (two_hand_event_or_None, conf)}
+
+            The ``both`` slot carries ``hands_together`` (집기) or
+            ``palms_down`` (놓기); ``hands_together`` takes priority when
+            both would fire.
         """
         if now is None:
             now = perf_counter()
@@ -103,16 +135,12 @@ class MotionDetector:
             wrist = joints.get(f"{hand}_wrist")
             st = self._state[hand]
             if elbow is None or wrist is None:
-                # keep samples but don't append; let them age out
                 _prune(st.samples, now)
                 continue
             rel_x = wrist.x - elbow.x
             rel_y = wrist.y - elbow.y
             st.samples.append((now, rel_x, rel_y))
             _prune(st.samples, now)
-
-            if not fist_flags.get(hand, False):
-                continue
 
             # chop: y-axis (axis=1)
             rev_y, speed_y, amp_y = _reversals_and_peak_speed(st.samples, axis=1)
@@ -139,9 +167,10 @@ class MotionDetector:
                 st.last_event_t[MOTION_STIR] = now
                 results[hand] = (MOTION_STIR, min(1.0, conf))
 
-        # hands_together
+        # --- two-hand events --------------------------------------------------
         lw = joints.get("left_wrist")
         rw = joints.get("right_wrist")
+        together_fired = False
         if lw is not None and rw is not None:
             dx = lw.x - rw.x
             dy = lw.y - rw.y
@@ -157,7 +186,31 @@ class MotionDetector:
                 self._last_together_t = now
                 conf = min(1.0, 1.0 - dist / _HANDS_TOGETHER_DIST)
                 results["both"] = (MOTION_HANDS_TOGETHER, conf)
+                together_fired = True
         else:
             self._together_streak = 0
+
+        # palms_down (놓기): both hands have 5 extended fingers AND are NOT
+        # pointing up. Hands_together gets priority so that tightly-grouped
+        # palms-down hands don't fire both events at once.
+        left_f = hand_flags.get("left", HandFlags())
+        right_f = hand_flags.get("right", HandFlags())
+        palms_down_now = (
+            left_f.present and right_f.present
+            and left_f.all5_extended and right_f.all5_extended
+            and (not left_f.fingers_up) and (not right_f.fingers_up)
+        )
+        if palms_down_now:
+            self._palms_down_streak += 1
+        else:
+            self._palms_down_streak = 0
+
+        if (
+            not together_fired
+            and self._palms_down_streak >= _PALMS_DOWN_FRAMES
+            and (now - self._last_palms_down_t) >= _COOLDOWN_S
+        ):
+            self._last_palms_down_t = now
+            results["both"] = (MOTION_PALMS_DOWN, 1.0)
 
         return results
