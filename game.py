@@ -120,53 +120,60 @@ class Game:
             return
 
         if st.kind == "chop":
-            if h:
+            if h:  # 손에 재료를 들고 있는 경우
                 base = h["id"].replace("_c", "")
-                if h.get("chopped"):
+                if h.get("chopped"):  # 이미 chop된 재료는 못 넣음
                     self._pop(self.player.x, self.player.y - 20, "Already chopped", C["white"])
                     return
-                if not INGS.get(base, {}).get("can_chop"):
+                if not INGS.get(base, {}).get("can_chop"):  # chop할 수 없는 재료는 못 넣음
                     self._pop(self.player.x, self.player.y - 20, "Can't chop this!", C["red"])
                     return
-
+ 
+                # board에 chopped된 재료가 있으면: 손에 재료가 없을 때만 집을 수 있고,
+                # 손에 재료가 있으면 먼저 내려놓으라고 알림
                 if st.chop_item and st.chop_item.get("chopped"):
+                    if h:
+                        self._pop(self.player.x, self.player.y - 20, "Put down current item first", C["orange"])
+                        return
                     self.player.holding = dict(st.chop_item)
                     st.chop_item = None; st.chop_prog = 0.0; st.chopping = False
                     self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
                     return
-
+ 
+                # board에 재료가 있으면 (chopping 중이든 아니든): 기존 재료 지우기
                 if st.chop_item:
-                    if st.chopping:
+                    if st.chopping:  # chopping 중이면 기다리라는 메시지
                         self._pop(st.cx(), st.y - 14, "Wait for chopping to finish", C["orange"])
                         return
                     st.chop_item = None; st.chop_prog = 0.0; st.chopping = False
-
+ 
                 if not st.chop_item:
+                    # board가 비어있으면 새 재료를 놓고 chopping 시작
                     st.chop_item = dict(h); self.player.holding = None; st.chop_prog = 0.0
                     st.chopping = True
                     self._pop(st.cx(), st.y - 14, "Chopping...", C["orange"])
-                    log.info(f"CHOP_PLACE: {h['id']}")
-            else:
-                if st.chop_item and st.chop_item.get("chopped"):
+            else:  # 손에 아무것도 들고 있지 않은 경우
+                if st.chop_item and st.chop_item.get("chopped"):  # chop된 재료가 있으면 집기
                     self.player.holding = dict(st.chop_item)
                     st.chop_item = None; st.chop_prog = 0.0; st.chopping = False
                     self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
-                elif st.chop_item and not st.chopping:
+                elif st.chop_item and not st.chopping:  # chop되지 않은 재료가 있고 chopping 중이 아니면 chopping 시작
                     st.chopping = True
                     self._pop(st.cx(), st.y - 14, "Chopping...", C["orange"])
             return
+ 
 
         if st.kind == "pot":
             burned = st.pot_cooked and st.pot_burn >= BURN_TIME
-            if h and not st.pot_cooked:
+            if h and h.get("cooked"):  # 이미 완성된 요리는 pot에 넣을 수 없음
+                self._pop(self.player.x, self.player.y - 20, "Can't add cooked dish!", C["red"])
+            elif h and not st.pot_cooked:  # 손에 재료가 있고 pot이 아직 조리되지 않았으면 재료 추가
                 st.pot_items.append(dict(h)); self.player.holding = None
                 self._pop(st.cx(), st.y - 14, "Added ✓", C["gold"])
-                log.info(f"POT_ADD: {h['id']} (total {len(st.pot_items)})")
-            elif not h and st.pot_items and not st.pot_cooking and not st.pot_cooked:
+            elif not h and st.pot_items and not st.pot_cooking and not st.pot_cooked:  # 손에 아무것도 없고 재료가 있고 조리 중이 아니면 불 켜기
                 st.pot_on = True; st.pot_cooking = True
                 self._pop(st.cx(), st.y - 14, "Fire on! 🔥", C["orange"])
-                log.info(f"POT_FIRE_ON: items={[i['id'] for i in st.pot_items]}")
-            elif not h and st.pot_cooked and not burned:
+            elif not h and st.pot_cooked and not burned:  # 손에 아무것도 없고 조리가 완료되었고 타지 않았으면 요리 꺼내기
                 self.player.holding = {
                     "id": "cooked", "label": "Cooked Dish",
                     "contents": list(st.pot_items), "cooked": True}
@@ -174,14 +181,12 @@ class Game:
                 st.pot_cooking = False; st.pot_prog = 0.0
                 st.pot_on = False; st.pot_burn = 0.0; st.pot_burned = False
                 self._pop(self.player.x, self.player.y - 20, "Picked!", C["green"])
-                log.info("POT_PICKUP: cooked dish")
-            elif not h and burned:
+            elif not h and burned:  # 손에 아무것도 없고 요리가 탄 경우: 청소
                 st.pot_items = []; st.pot_cooked = False
                 st.pot_cooking = False; st.pot_prog = 0.0
                 st.pot_on = False; st.pot_burn = 0.0; st.pot_burned = False
                 self._pop(st.cx(), st.y - 14, "Burned! Cleared.", C["burn"])
-                log.warning("POT_BURNED_CLEAR")
-            elif not h and st.pot_cooking:
+            elif not h and st.pot_cooking:  # 손에 아무것도 없고 조리 중이면 상태 메시지
                 self._pop(st.cx(), st.y - 14, "Cooking...", C["white"])
             return
 
