@@ -758,6 +758,8 @@ class Game:
         action_pressed = False
         
         if self.state == "play":
+            self.buttons["left"].handle_mouse(mouse_pos, mouse_pressed)
+            self.buttons["right"].handle_mouse(mouse_pos, mouse_pressed)
             keys_held["left"] = self.buttons["left"].pressed
             keys_held["right"] = self.buttons["right"].pressed
             action_pressed = self.buttons["action"].handle_mouse(mouse_pos, mouse_pressed)
@@ -768,14 +770,6 @@ class Game:
                 self._spawn_order()
                 self._spawn_order()
             return
-
-        # Update button states (continuous press for movement)
-        for btn_name in ["left", "right"]:
-            btn = self.buttons[btn_name]
-            btn.handle_mouse(mouse_pos, mouse_pressed)
-            
-        # Action button - single press only
-        action_pressed = self.buttons["action"].handle_mouse(mouse_pos, mouse_pressed)
 
         # player
         self.player.update(keys_held, dt, gw, self.gy)
