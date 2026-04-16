@@ -8,13 +8,15 @@
       키보드:  ← → 이동 | Z / Space = 행동
 """
 
+import dataclasses
 import pygame
 import sys
 import random
 import logging
+from typing import Optional
 
 from engine import screen, clock, FPS, F
-from constants import C, INGS, RECIPES, BURN_TIME, COOK_TIME, ORDER_TIME, GAME_TIME
+from constants import C, INGS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
 from utils import rr, txt, bar
 from ui import Popup, Btn, RecipeOverlay, IngredientOverlay
 from entities import Station, Player, Order
@@ -28,6 +30,37 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("overcook")
+
+# ── gesture / unified input ───────────────────────────────────────────────
+# finger_1~5 map to station groups (slot 1-5)
+GESTURE_STATION_SLOTS: dict[int, str] = {
+    1: "trash",
+    2: "ing",
+    3: "chop",
+    4: "pot",
+    5: "submit",
+}
+
+
+@dataclasses.dataclass
+class GameInput:
+    """Frame-level input state consumed by Game.update().
+
+    Camera / gesture module fills the gesture fields;
+    keyboard / on-screen buttons fill move_dir / action.
+    Both paths feed the same update() call.
+    """
+    # ── gesture ──────────────────────────────
+    move_to_slot: Optional[int] = None   # 1-5 (finger_1 ~ finger_5)
+    chop:         bool = False           # chop_motion
+    stir:         bool = False           # stir_motion
+    pick_up:      bool = False           # hands_together
+    put_down:     bool = False           # palms_down
+    confirm:      bool = False           # thumbs_up
+    # ── keyboard / button fallback ───────────
+    move_dir:      int  = 0              # -1 / 0 / +1
+    action:        bool = False
+    overlay_click: Optional[tuple] = None
 
 
 class Game:
@@ -62,12 +95,12 @@ class Game:
         gy = self._gy()
         self.gw, self.gh = gw, gh
 
-        N   = 8
+        N   = 5
         pad = 20
         gap = (gw - 2 * pad - N * Station.SW) // (N - 1)
         sy  = gy - Station.SH - 36
 
-        kinds = ["trash", "ing", "chop", "chop", "pot", "pot", "plate", "submit"]
+        kinds = ["trash", "ing", "chop", "pot", "submit"]
         self.stations = []
         for i, k in enumerate(kinds):
             sx = pad + i * (Station.SW + gap)
@@ -81,17 +114,54 @@ class Game:
         pad = 8
         return (pad, HUD_H + pad, gw - pad * 2, station_top - HUD_H - pad * 2)
 
+    # gesture-label → (button label, color)
+    _SLOT_BTN_INFO = [
+        (1, "🗑 Trash",   (80, 50, 50)),
+        (2, "🥬 Pantry",  (50, 80, 50)),
+        (3, "🔪 Chop",    (80, 70, 30)),
+        (4, "🍳 Stove",   (30, 60, 100)),
+        (5, "🍽 Submit",  (70, 30, 100)),
+    ]
+    _ACT_BTN_INFO = [
+        ("confirm",  "✓ OK",      (60, 120, 60)),
+        ("chop",     "Chop!",     (120, 80, 30)),
+        ("stir",     "Stir!",     (30, 80, 120)),
+        ("pick_up",  "Pick Up",   (80, 60, 120)),
+        ("pause",    "⏸ Pause",   (80, 60, 80)),
+    ]
+
     def _make_btns(self):
         gw, gh = screen.get_size()
         gy = self._gy()
-        bh = gh - gy - 20
-        bw = 90
-        y = gy + 10
-        self.btn_left   = Btn(10,          y, bw, bh, "◀ Left",   (40, 80, 40))
-        self.btn_right  = Btn(10 + bw + 8, y, bw, bh, "Right ▶",  (40, 80, 40))
-        # self.btn_recipe = Btn(10 + bw * 2 + 16, y, bw, bh, "Recipe",   (50, 50, 100))
-        self.btn_action = Btn(gw - bw - 10, y, bw, bh, "Action",   (80, 40, 40))
+        bh = (gh - gy - 24) // 2 - 4
+        bh = max(bh, 28)
+        y  = gy + 8
+        pad = 8
+        n_slot = len(self._SLOT_BTN_INFO)
+        n_act  = len(self._ACT_BTN_INFO)
+        # left half → station-slot buttons
+        left_w = gw // 2 - pad * 2
+        sw = (left_w - (n_slot - 1) * 4) // n_slot
+        self.btn_slots = []
+        for i, (slot, lbl, col) in enumerate(self._SLOT_BTN_INFO):
+            bx = pad + i * (sw + 4)
+            self.btn_slots.append(Btn(bx, y, sw, bh, lbl, col))
+        # right half → action buttons
+        right_start = gw // 2 + pad
+        right_w = gw - right_start - pad
+        aw = (right_w - (n_act - 1) * 4) // n_act
+        self.btn_acts = []
+        for i, (_, lbl, col) in enumerate(self._ACT_BTN_INFO):
+            bx = right_start + i * (aw + 4)
+            self.btn_acts.append(Btn(bx, y, aw, bh, lbl, col))
+        # legacy refs used elsewhere
+        self.btn_left   = self.btn_slots[1]   # Pantry as default "left" hint
+        self.btn_right  = self.btn_slots[3]   # Stove as default "right" hint
+        self.btn_action = self.btn_acts[0]    # Confirm
         self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 70, 110, 52, "Start", (50, 50, 130))
+        # pause menu buttons
+        self.btn_pause_continue = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "▶ Continue", (40, 120, 60))
+        self.btn_pause_restart  = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "↺ Restart",  (120, 50, 50))
 
     # ── station interaction ───────────────────
     def _near(self):
@@ -103,175 +173,254 @@ class Game:
                 best, bd = s, d
         return best
 
+    def _station_for_slot(self, slot: int):
+        """Return the best station for a gesture slot (1-5).
+
+        For grouped kinds (chop, pot) auto-routes to an idle station;
+        falls back to the first in the group if all are busy.
+        """
+        kind = GESTURE_STATION_SLOTS.get(slot)
+        if not kind:
+            return None
+        group = [s for s in self.stations if s.kind == kind]
+        if not group:
+            return None
+        if kind == "chop":
+            idle = [s for s in group if not s.chop_item and not s.chopping]
+            return idle[0] if idle else group[0]
+        if kind == "pot":
+            idle = [s for s in group if not s.pot_cooking and not s.pot_cooked]
+            return idle[0] if idle else group[0]
+        return group[0]
+
+    def _find_submit_dish(self):
+        h = self.player.holding
+        if h and h.get("cooked"):
+            return h, True
+        return None, False
+
+    def _clear_submit_source(self, from_holding: bool):
+        if from_holding:
+            self.player.holding = None
+
+    def _act_ing(self, _st):
+        if not self.player.holding:
+            self.overlay.active = True
+        else:
+            self._pop(self.player.x, self.player.y - 20, "Drop item first!", C["red"])
+
+    def _act_chop(self, st, chop_action=False):
+        h = self.player.holding
+        if h:
+            base = h.get("id", "").replace("_c", "")
+            if h.get("chopped"):
+                self._pop(self.player.x, self.player.y - 20, "Already chopped", C["white"])
+                return
+            if not base or not INGS.get(base, {}).get("can_chop"):
+                self._pop(self.player.x, self.player.y - 20, "Can't chop this!", C["red"])
+                return
+
+            if st.chop_item:
+                self._pop(self.player.x, self.player.y - 20, "Board occupied", C["orange"])
+                return
+
+            st.chop_item = dict(h)
+            self.player.holding = None
+            st.chop_prog = 0.0
+            if chop_action:
+                st.chop_hits = 1
+                st.chopping = True
+                self._pop(st.cx(), st.y - 14, f"Chop {CHOP_ACTIONS}x ({st.chop_hits}/{CHOP_ACTIONS})", C["orange"])
+            else:
+                st.chop_hits = 0
+                st.chopping = False
+                self._pop(st.cx(), st.y - 14, "Placed on board", C["lime"])
+            return
+
+        if st.chop_item and st.chop_item.get("chopped"):
+            self.player.holding = dict(st.chop_item)
+            st.chop_item = None
+            st.chop_prog = 0.0
+            st.chop_hits = 0
+            st.chopping = False
+            self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
+            return
+
+        if chop_action and st.chop_item and not st.chop_item.get("chopped"):
+            st.chopping = True
+            st.chop_hits = min(CHOP_ACTIONS, st.chop_hits + 1)
+            st.chop_prog = st.chop_hits / float(CHOP_ACTIONS)
+            self._pop(st.cx(), st.y - 14, f"Chop {CHOP_ACTIONS}x ({st.chop_hits}/{CHOP_ACTIONS})", C["orange"])
+
+    def _act_pot(self, st, stir_only=False):
+        h = self.player.holding
+        burned = st.pot_burned
+
+        if stir_only:
+            if h:
+                self._pop(self.player.x, self.player.y - 20, "Drop item first!", C["red"])
+                return
+            if not st.pot_items:
+                self._pop(st.cx(), st.y - 14, "Add ingredients first", C["white"])
+                return
+            if st.pot_burned:
+                self._pop(st.cx(), st.y - 14, "Already burned! Clear it.", C["burn"])
+                return
+            # auto-start cooking on first stir
+            if not st.pot_cooking and not st.pot_cooked:
+                st.pot_on = True
+                st.pot_cooking = True
+                st.pot_stirs = 0
+                st.pot_prog = 0.0
+            st.pot_stirs += 1
+            # over-stir burn: stirs >= STIR_ACTIONS + 3
+            if st.pot_stirs >= STIR_ACTIONS + 3:
+                st.pot_cooking = False
+                st.pot_cooked = True
+                st.pot_burned = True
+                st.pot_burn = BURN_TIME
+                self._pop(st.cx(), st.y - 14, "🔥 Over-stirred! BURNED!", C["burn"])
+                log.warning("POT_BURNED: over-stirred")
+                return
+            st.pot_prog = min(1.0, st.pot_stirs / float(STIR_ACTIONS))
+            self._pop(st.cx(), st.y - 14, f"Stir {STIR_ACTIONS}x ({st.pot_stirs}/{STIR_ACTIONS})", C["orange"])
+            return
+
+        if h and h.get("cooked"):
+            self._pop(self.player.x, self.player.y - 20, "Can't add cooked dish!", C["red"])
+        elif h and not st.pot_cooked:
+            base = h.get("id", "").replace("_c", "")
+            if INGS.get(base, {}).get("can_chop") and not h.get("chopped"):
+                self._pop(self.player.x, self.player.y - 20, "Chop it first!", C["red"])
+            else:
+                st.pot_items.append(dict(h))
+                self.player.holding = None
+                self._pop(st.cx(), st.y - 14, "Added ✓", C["gold"])
+        elif not h and st.pot_cooked and not burned:
+            self.player.holding = {
+                "id": "cooked",
+                "label": "Cooked Dish",
+                "contents": list(st.pot_items),
+                "cooked": True,
+            }
+            st.pot_items = []
+            st.pot_cooked = False
+            st.pot_cooking = False
+            st.pot_stirs = 0
+            st.pot_prog = 0.0
+            st.pot_on = False
+            st.pot_burn = 0.0
+            st.pot_burned = False
+            self._pop(self.player.x, self.player.y - 20, "Picked!", C["green"])
+        elif not h and burned:
+            self.player.holding = {
+                "id": "cooked",
+                "label": "Burned Dish",
+                "contents": list(st.pot_items),
+                "cooked": True,
+                "burned": True,
+            }
+            st.pot_items = []
+            st.pot_cooked = False
+            st.pot_cooking = False
+            st.pot_stirs = 0
+            st.pot_prog = 0.0
+            st.pot_on = False
+            st.pot_burn = 0.0
+            st.pot_burned = False
+            self._pop(self.player.x, self.player.y - 20, "Picked burned dish!", C["burn"])
+        elif not h and st.pot_cooking:
+            self._pop(st.cx(), st.y - 14, f"Stir {STIR_ACTIONS}x ({st.pot_stirs}/{STIR_ACTIONS})", C["white"])
+
+    def _act_submit(self, st):
+        dish, from_holding = self._find_submit_dish()
+        if not dish:
+            self._pop(st.cx(), st.y - 14, "Nothing to submit!", C["red"])
+            return
+
+        contents = dish.get("contents", [])
+        h_ids = sorted(
+            c.get("id")
+            for c in contents
+            if isinstance(c, dict) and c.get("id")
+        )
+        if len(h_ids) != len(contents):
+            self._pop(st.cx(), st.y - 14, "Invalid dish: missing ingredient id", C["red"])
+            self._clear_submit_source(from_holding)
+            log.warning("SUBMIT_FAIL: missing ingredient id in dish")
+            return
+
+        matched = None
+        for o in self.orders:
+            if o.status != "active":
+                continue
+            if sorted(o.recipe["needs"]) == h_ids and o.recipe.get("cook", True) == dish.get("cooked", False):
+                matched = o
+                break
+
+        if matched:
+            if dish.get("burned"):
+                penalty = matched.recipe["pts"] // 2
+                self.score = max(0, self.score - penalty)
+                matched.status = "done"
+                self._clear_submit_source(from_holding)
+                self._pop(st.cx(), st.y - 30, f"-{penalty} pts! BURNED!", C["burn"])
+                log.warning(f"SUBMIT_BURNED: recipe={matched.recipe['name']} penalty={penalty} score={self.score}")
+            else:
+                bonus = int(matched.t / ORDER_TIME * 50)
+                pts = matched.recipe["pts"] + bonus
+                self.score += pts
+                matched.status = "done"
+                self._clear_submit_source(from_holding)
+                self._pop(st.cx(), st.y - 30, f"+{pts} pts! 🎉", C["green"])
+                log.info(
+                    f"SUBMIT_OK: recipe={matched.recipe['name']} pts={pts} "
+                    f"(base={matched.recipe['pts']} bonus={bonus}) score={self.score}"
+                )
+        else:
+            self._pop(st.cx(), st.y - 14, "No matching order!", C["red"])
+            self._clear_submit_source(from_holding)
+            log.warning(f"SUBMIT_FAIL: no matching order for {h_ids}")
+
+    def _act_trash(self, st):
+        h = self.player.holding
+        if h:
+            self.player.holding = None
+            self._pop(st.cx(), st.y - 14, "Trashed!", C["pink"])
+            log.info(f"TRASH: {h.get('id', '<missing-id>')}")
+            return
+
+        chops = [s for s in self.stations if s.kind == "chop" and s.chop_item]
+        if chops:
+            for chop in chops:
+                chop.chop_item = None
+                chop.chop_prog = 0.0
+                chop.chop_hits = 0
+                chop.chopping = False
+            self._pop(st.cx(), st.y - 14, "Chop boards cleared", C["pink"])
+            log.info(f"TRASH_CHOP: cleared {len(chops)} board(s)")
+        else:
+            self._pop(st.cx(), st.y - 14, "Nothing to trash", C["white"])
+
     def do_action(self):
         if self.overlay.active:
             self.overlay.active = False
             return
 
         st = self._near()
-        if not st: return
-        h = self.player.holding
-
-        if st.kind == "ing":
-            if not h:
-                self.overlay.active = True
-            else:
-                self._pop(self.player.x, self.player.y - 20, "Drop item first!", C["red"])
+        if not st:
             return
 
-        if st.kind == "chop":
-            if h:  # 손에 재료를 들고 있는 경우
-                base = h["id"].replace("_c", "")
-                if h.get("chopped"):  # 이미 chop된 재료는 못 넣음
-                    self._pop(self.player.x, self.player.y - 20, "Already chopped", C["white"])
-                    return
-                if not INGS.get(base, {}).get("can_chop"):  # chop할 수 없는 재료는 못 넣음
-                    self._pop(self.player.x, self.player.y - 20, "Can't chop this!", C["red"])
-                    return
- 
-                # board에 chopped된 재료가 있으면: 손에 재료가 없을 때만 집을 수 있고,
-                # 손에 재료가 있으면 먼저 내려놓으라고 알림
-                if st.chop_item and st.chop_item.get("chopped"):
-                    if h:
-                        self._pop(self.player.x, self.player.y - 20, "Put down current item first", C["orange"])
-                        return
-                    self.player.holding = dict(st.chop_item)
-                    st.chop_item = None; st.chop_prog = 0.0; st.chopping = False
-                    self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
-                    return
- 
-                # board에 재료가 있으면 (chopping 중이든 아니든): 기존 재료 지우기
-                if st.chop_item:
-                    if st.chopping:  # chopping 중이면 기다리라는 메시지
-                        self._pop(st.cx(), st.y - 14, "Wait for chopping to finish", C["orange"])
-                        return
-                    st.chop_item = None; st.chop_prog = 0.0; st.chopping = False
- 
-                if not st.chop_item:
-                    # board가 비어있으면 새 재료를 놓고 chopping 시작
-                    st.chop_item = dict(h); self.player.holding = None; st.chop_prog = 0.0
-                    st.chopping = True
-                    self._pop(st.cx(), st.y - 14, "Chopping...", C["orange"])
-            else:  # 손에 아무것도 들고 있지 않은 경우
-                if st.chop_item and st.chop_item.get("chopped"):  # chop된 재료가 있으면 집기
-                    self.player.holding = dict(st.chop_item)
-                    st.chop_item = None; st.chop_prog = 0.0; st.chopping = False
-                    self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
-                elif st.chop_item and not st.chopping:  # chop되지 않은 재료가 있고 chopping 중이 아니면 chopping 시작
-                    st.chopping = True
-                    self._pop(st.cx(), st.y - 14, "Chopping...", C["orange"])
-            return
- 
-
-        if st.kind == "pot":
-            burned = st.pot_cooked and st.pot_burn >= BURN_TIME
-            if h and h.get("cooked"):  # 이미 완성된 요리는 pot에 넣을 수 없음
-                self._pop(self.player.x, self.player.y - 20, "Can't add cooked dish!", C["red"])
-            elif h and not st.pot_cooked:  # 손에 재료가 있고 pot이 아직 조리되지 않았으면 재료 추가
-                st.pot_items.append(dict(h)); self.player.holding = None
-                self._pop(st.cx(), st.y - 14, "Added ✓", C["gold"])
-            elif not h and st.pot_items and not st.pot_cooking and not st.pot_cooked:  # 손에 아무것도 없고 재료가 있고 조리 중이 아니면 불 켜기
-                st.pot_on = True; st.pot_cooking = True
-                self._pop(st.cx(), st.y - 14, "Fire on! 🔥", C["orange"])
-            elif not h and st.pot_cooked and not burned:  # 손에 아무것도 없고 조리가 완료되었고 타지 않았으면 요리 꺼내기
-                self.player.holding = {
-                    "id": "cooked", "label": "Cooked Dish",
-                    "contents": list(st.pot_items), "cooked": True}
-                st.pot_items = []; st.pot_cooked = False
-                st.pot_cooking = False; st.pot_prog = 0.0
-                st.pot_on = False; st.pot_burn = 0.0; st.pot_burned = False
-                self._pop(self.player.x, self.player.y - 20, "Picked!", C["green"])
-            elif not h and burned:  # 손에 아무것도 없고 요리가 탄 경우: 청소
-                st.pot_items = []; st.pot_cooked = False
-                st.pot_cooking = False; st.pot_prog = 0.0
-                st.pot_on = False; st.pot_burn = 0.0; st.pot_burned = False
-                self._pop(st.cx(), st.y - 14, "Burned! Cleared.", C["burn"])
-            elif not h and st.pot_cooking:  # 손에 아무것도 없고 조리 중이면 상태 메시지
-                self._pop(st.cx(), st.y - 14, "Cooking...", C["white"])
-            return
-
-        if st.kind == "plate":
-            if h and h.get("burned"):
-                self.player.holding = None
-                self._pop(self.player.x, self.player.y - 20, "Burned food discarded", C["burn"])
-            elif h and h.get("cooked"):
-                if not st.plate_item:
-                    st.plate_item = {"contents": list(h.get("contents", [])), "cooked": True}
-                    self.player.holding = None
-                    self._pop(st.cx(), st.y - 14, "Plated!", C["lime"])
-                    log.info(f"PLATED cooked: {[c['id'] for c in st.plate_item['contents']]}")
-                else:
-                    self._pop(st.cx(), st.y - 14, "Plate occupied!", C["red"])
-            elif h and h.get("chopped"):
-                if not st.plate_item:
-                    st.plate_item = {"contents": [dict(h)], "cooked": False}
-                    self.player.holding = None
-                    self._pop(st.cx(), st.y - 14, f"Added {h['label']}", C["lime"])
-                    log.info(f"PLATED raw: {h['id']}")
-                elif not st.plate_item.get("cooked"):
-                    st.plate_item["contents"].append(dict(h))
-                    self.player.holding = None
-                    n = len(st.plate_item["contents"])
-                    self._pop(st.cx(), st.y - 14, f"Added {h['label']} ({n})", C["lime"])
-                    log.info(f"PLATE_ADD: {h['id']} total={n}")
-                else:
-                    self._pop(st.cx(), st.y - 14, "Plate has a cooked dish!", C["red"])
-            elif not h and st.plate_item:
-                if st.plate_item.get("cooked"):
-                    self.player.holding = dict(st.plate_item)
-                    self.player.holding["contents"] = list(st.plate_item["contents"])
-                    st.plate_item = None
-                    self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
-                    log.info("PLATE_PICKUP")
-                else:
-                    n = len(st.plate_item["contents"])
-                    self._pop(st.cx(), st.y - 14, f"{n} item(s) on plate — Submit!", C["white"])
-            elif not h:
-                self._pop(st.cx(), st.y - 14, "Submit at Submit station!", C["white"])
-            return
-
-        if st.kind == "submit":
-            plate_st = next((s for s in self.stations if s.kind == "plate" and s.plate_item), None)
-            if not plate_st:
-                self._pop(st.cx(), st.y - 14, "Nothing plated!", C["red"])
-                return
-            dish = plate_st.plate_item
-            h_ids = sorted(c["id"] for c in dish["contents"])
-            matched = None
-            for o in self.orders:
-                if o.status != "active": continue
-                if (sorted(o.recipe["needs"]) == h_ids
-                        and o.recipe.get("cook", True) == dish.get("cooked", False)):
-                    matched = o; break
-            if matched:
-                bonus = int(matched.t / ORDER_TIME * 50)
-                pts = matched.recipe["pts"] + bonus
-                self.score += pts
-                matched.status = "done"
-                plate_st.plate_item = None
-                self._pop(st.cx(), st.y - 30, f"+{pts} pts! 🎉", C["green"])
-                log.info(f"SUBMIT_OK: recipe={matched.recipe['name']} pts={pts} (base={matched.recipe['pts']} bonus={bonus}) score={self.score}")
-            else:
-                self._pop(st.cx(), st.y - 14, "No matching order!", C["red"])
-                plate_st.plate_item = None
-                log.warning(f"SUBMIT_FAIL: no matching order for {h_ids}")
-            return
-
-        if st.kind == "trash":
-            if h:
-                self.player.holding = None
-                self._pop(st.cx(), st.y - 14, "Trashed!", C["pink"])
-                log.info(f"TRASH: {h['id']}")
-            else:
-                chops = [s for s in self.stations if s.kind == "chop" and s.chop_item]
-                if chops:
-                    for chop in chops:
-                        chop.chop_item = None; chop.chop_prog = 0.0; chop.chopping = False
-                    self._pop(st.cx(), st.y - 14, "Chop boards cleared", C["pink"])
-                    log.info(f"TRASH_CHOP: cleared {len(chops)} board(s)")
-                else:
-                    self._pop(st.cx(), st.y - 14, "Nothing to trash", C["white"])
-            return
+        handlers = {
+            "ing": self._act_ing,
+            "chop": self._act_chop,
+            "pot": self._act_pot,
+            "submit": self._act_submit,
+            "trash": self._act_trash,
+        }
+        handler = handlers.get(st.kind)
+        if handler:
+            handler(st)
 
     def _pick_ingredient(self, ing_key):
         ing = INGS[ing_key]
@@ -300,40 +449,38 @@ class Game:
         if k == "ing":
             return "Action: Open pantry" if not h else "Action: Drop item first"
         if k == "chop":
-            if h and not h.get("chopped") and INGS.get(h["id"].replace("_c", ""), {}).get("can_chop"):
-                return "Action: Place & chop"
+            if h and not h.get("chopped") and INGS.get(h.get("id", "").replace("_c", ""), {}).get("can_chop"):
+                return "Action: Place on board  |  Chop!: Start chopping"
             if not h and st.chop_item and st.chop_item.get("chopped"):
                 return "Action: Pick chopped item"
             if not h and st.chop_item:
-                return "Action: Start chopping"
+                return f"Chop button: {st.chop_hits}/{CHOP_ACTIONS}"
         if k == "pot":
-            burned = st.pot_cooked and st.pot_burn >= BURN_TIME
-            if burned: return "Action: Clear burned food"
-            if h and not st.pot_cooked: return "Action: Add to pot"
+            burned = st.pot_burned
+            if burned: return "Action: Pick up burned dish (trash to discard)"
+            if h and not st.pot_cooked:
+                base = h.get("id", "").replace("_c", "")
+                if INGS.get(base, {}).get("can_chop") and not h.get("chopped"):
+                    return "Chop it first before adding to pot!"
+                return "Action: Add to pot"
             if not h and st.pot_items and not st.pot_cooking and not st.pot_cooked:
-                return "Action: Turn on fire 🔥"
+                return f"Stir to start cooking! (max {STIR_ACTIONS + 2} stirs)"
             if not h and st.pot_cooked: return "Action: Pick cooked dish"
-        if k == "plate":
-            if h and h.get("cooked") and not h.get("burned"):
-                return "Action: Place on plate" if not st.plate_item else "Action: Plate occupied!"
-            if h and h.get("chopped") and not st.plate_item:
-                return "Action: Place on plate"
-            if h and h.get("chopped") and st.plate_item and not st.plate_item.get("cooked"):
-                return f"Action: Add to plate ({len(st.plate_item['contents'])} items)"
-            if not h and st.plate_item:
-                if st.plate_item.get("cooked"):
-                    return "Action: Pick up plated dish"
-                return f"Submit at Submit station! ({len(st.plate_item['contents'])} items)"
+            if not h and st.pot_cooking: return f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {STIR_ACTIONS + 3})"
         if k == "submit":
-            plate_st = next((s for s in self.stations if s.kind == "plate" and s.plate_item), None)
-            return "Action: Submit dish!" if plate_st else "Action: No plated dish"
+            if h and h.get("cooked"):
+                if h.get("burned"):
+                    return "Action: Submit burned dish (penalty!)"
+                return "Action: Submit dish!"
+            dish, _ = self._find_submit_dish()
+            return "Action: Submit dish!" if dish else "Action: Nothing to submit"
         if k == "trash":
             if h: return "Action: Trash item"
             return "Action: Clear chop boards"
         return ""
 
     # ── update ───────────────────────────────
-    def update(self, dt, move_dir, action_now, mpos, mpressed, overlay_click):
+    def update(self, dt, gi: "GameInput", mpos, mpressed):
         gw, gh = screen.get_size()
         if gw != self.gw or gh != self.gh:
             self.gw, self.gh = gw, gh
@@ -346,9 +493,17 @@ class Game:
                 self._spawn_order(); self._spawn_order()
             return
 
+        if self.state == "paused":
+            if self.btn_pause_continue.update(mpos, mpressed):
+                self.state = "play"
+            if self.btn_pause_restart.update(mpos, mpressed):
+                self.reset(); self.state = "play"
+                self._spawn_order(); self._spawn_order()
+            return
+
         if self.overlay.active:
-            if overlay_click:
-                key = self.overlay.check_click(overlay_click)
+            if gi.overlay_click:
+                key = self.overlay.check_click(gi.overlay_click)
                 if key:
                     self._pick_ingredient(key)
                 else:
@@ -358,20 +513,58 @@ class Game:
         if self.recipe_overlay.active:
             return
 
-        self.btn_left.update(mpos, mpressed)
-        self.btn_right.update(mpos, mpressed)
-        left_held  = self.btn_left.held
-        right_held = self.btn_right.held
-        if self.btn_action.update(mpos, mpressed):
-            action_now = True
-        # if self.btn_recipe.update(mpos, mpressed):
-            # self.recipe_overlay.active = True
+        # ── on-screen gesture buttons ──
+        move_to_slot = gi.move_to_slot
+        for i, (slot, _, _c) in enumerate(self._SLOT_BTN_INFO):
+            if self.btn_slots[i].update(mpos, mpressed):
+                move_to_slot = slot
 
-        if left_held:   move_dir = -1
-        elif right_held: move_dir = 1
+        act_flags = {
+            "confirm":  gi.confirm  or gi.action,
+            "chop":     gi.chop,
+            "stir":     gi.stir,
+            "pick_up":  gi.pick_up,
+            "pause":    False,
+        }
+        for i, (key, _, _c) in enumerate(self._ACT_BTN_INFO):
+            if self.btn_acts[i].update(mpos, mpressed):
+                act_flags[key] = True
+
+        if act_flags["pause"]:
+            self.state = "paused"
+            return
+
+        move_dir = gi.move_dir
+
+        # ── gesture: teleport to station slot ──
+        if move_to_slot is not None:
+            target = self._station_for_slot(move_to_slot)
+            if target:
+                self.player.x = float(target.cx() - Player.PW // 2)
+                self.player.y = float(self._gy() - Player.PH)
+                self.player.vy = 0.0
 
         self.player.update(move_dir, dt, gw, self._gy())
-        if action_now:
+
+        # ── action dispatch ──
+        handled = False
+        if act_flags["chop"]:
+            st = self._near()
+            if st and st.kind == "chop":
+                try:
+                    self._act_chop(st, chop_action=True)
+                except Exception:
+                    log.exception("_act_chop crashed")
+                handled = True
+        if act_flags["stir"] and not handled:
+            st = self._near()
+            if st and st.kind == "pot":
+                try:
+                    self._act_pot(st, stir_only=True)
+                except Exception:
+                    log.exception("_act_pot crashed")
+                handled = True
+        if any(act_flags[k] for k in ("confirm", "pick_up")) and not handled:
             try:
                 self.do_action()
             except Exception:
@@ -449,10 +642,10 @@ class Game:
             self._draw_recipes_panel()
 
         if self.state == "play":
-            self.btn_left.draw(screen)
-            self.btn_right.draw(screen)
-            # self.btn_recipe.draw(screen)
-            self.btn_action.draw(screen)
+            for btn in self.btn_slots:
+                btn.draw(screen)
+            for btn in self.btn_acts:
+                btn.draw(screen)
 
     def _draw_recipes_panel(self):
         rx, ry, rw, rh = self._recipe_panel_rect()
@@ -576,9 +769,9 @@ class Game:
             "Use screen buttons  (◀ ▶ move  |  Action = interact)",
             "Keyboard: arrow keys + Z/Space also work",
             "",
-            "Pantry → pick ingredient   |   Chop board → chop",
-            "Stove → add ingredients → fire on → pick when done",
-            "Plate/Submit → plate dish → submit for points",
+            "Pantry → pick ingredient   |   Chop board → OK to place, Chop! to chop",
+            "Stove → add ingredients → Stir to cook (burn if over-stirred!)",
+            "Stove done → pick up dish → go to Submit → submit for points",
             "Trash → drop unwanted items or clear chop board",
             "",
             "⚠  Leave pot too long after cooking → BURNED!",
@@ -598,6 +791,15 @@ class Game:
         txt(screen, "Click Start to play again", 18, (150, 150, 200), gw // 2, gh // 2 + 40)
         self.btn_start.draw(screen)
 
+    def draw_paused(self):
+        self.draw()
+        gw, gh = screen.get_size()
+        ov = pygame.Surface((gw, gh), pygame.SRCALPHA)
+        ov.fill((5, 5, 20, 180)); screen.blit(ov, (0, 0))
+        txt(screen, "⏸ Paused", 40, C["gold"], gw // 2, gh // 2 - 60)
+        self.btn_pause_continue.draw(screen)
+        self.btn_pause_restart.draw(screen)
+
 
 # ─────────────────────────────────────────────
 #  메인 루프
@@ -605,15 +807,24 @@ class Game:
 def main():
     game = Game()
 
-    held = {"left": False, "right": False}
+    # keyboard state
+    held      = {"left": False, "right": False}
+    # frame-level gesture flags (reset each frame)
+    _gi_frame: dict = {}
 
-    mpressed = False
+    mpressed     = False
     overlay_click = None
+
+    # keyboard → slot mapping (1-5 keys)
+    _SLOT_KEYS = {
+        pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3,
+        pygame.K_4: 4, pygame.K_5: 5,
+    }
 
     while True:
         dt = min(clock.tick(FPS) / 1000.0, 0.05)
 
-        action_now = False
+        _gi_frame = {}   # reset per-frame gesture flags
         overlay_click = None
 
         for event in pygame.event.get():
@@ -624,11 +835,24 @@ def main():
                     held["left"] = True
                 if event.key in (pygame.K_RIGHT, pygame.K_d):
                     held["right"] = True
+                # ── slot teleport (finger_1~5) ──
+                if event.key in _SLOT_KEYS and game.state == "play":
+                    _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
+                # ── gesture action shortcuts ──
                 if event.key in (pygame.K_z, pygame.K_SPACE):
-                    if game.state == "play": action_now = True
+                    if game.state == "play":
+                        _gi_frame["confirm"] = True
                     elif game.state in ("title", "over"):
                         game.reset(); game.state = "play"
                         game._spawn_order(); game._spawn_order()
+                if event.key == pygame.K_c and game.state == "play":
+                    _gi_frame["chop"] = True          # chop_motion
+                if event.key == pygame.K_v and game.state == "play":
+                    _gi_frame["stir"] = True           # stir_motion
+                if event.key == pygame.K_f and game.state == "play":
+                    _gi_frame["pick_up"] = True        # hands_together
+                if event.key == pygame.K_g and game.state == "play":
+                    _gi_frame["put_down"] = True       # palms_down
                 if event.key == pygame.K_r:
                     if game.state == "play":
                         game.recipe_overlay.active = not game.recipe_overlay.active
@@ -642,11 +866,15 @@ def main():
                         game.recipe_overlay.active = False
                     elif game.overlay.active:
                         game.overlay.active = False
+                    elif game.state == "play":
+                        game.state = "paused"
+                    elif game.state == "paused":
+                        game.state = "play"
                     else:
                         pygame.quit(); sys.exit()
             if event.type == pygame.KEYUP:
-                if event.key in (pygame.K_LEFT, pygame.K_a):   held["left"] = False
-                if event.key in (pygame.K_RIGHT, pygame.K_d):  held["right"] = False
+                if event.key in (pygame.K_LEFT, pygame.K_a):  held["left"]  = False
+                if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mpressed = True
                 if game.overlay.active:
@@ -655,16 +883,28 @@ def main():
                 mpressed = False
 
         move_dir = 0
-        if held["left"]:   move_dir = -1
+        if held["left"]:    move_dir = -1
         elif held["right"]: move_dir = 1
 
         mpos = pygame.mouse.get_pos()
-        game.update(dt, move_dir, action_now, mpos, mpressed, overlay_click)
+        gi = GameInput(
+            move_dir     = move_dir,
+            move_to_slot = _gi_frame.get("move_to_slot"),
+            confirm      = _gi_frame.get("confirm",  False),
+            chop         = _gi_frame.get("chop",     False),
+            stir         = _gi_frame.get("stir",     False),
+            pick_up      = _gi_frame.get("pick_up",  False),
+            put_down     = _gi_frame.get("put_down", False),
+            overlay_click= overlay_click,
+        )
+        game.update(dt, gi, mpos, mpressed)
 
         if game.state == "title":
             game.draw_title()
         elif game.state == "over":
             game.draw_over()
+        elif game.state == "paused":
+            game.draw_paused()
         else:
             game.draw()
 

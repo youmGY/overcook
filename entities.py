@@ -4,7 +4,15 @@ import time
 import random
 
 from engine import F
-from constants import C, INGS, RECIPES, BURN_TIME, COOK_TIME, CHOP_TIME, ORDER_TIME
+from constants import (
+    C,
+    INGS,
+    RECIPES,
+    BURN_TIME,
+    ORDER_TIME,
+    CHOP_ACTIONS,
+    STIR_ACTIONS,
+)
 from utils import rr, bar
 
 
@@ -20,10 +28,12 @@ class Station:
         self.chop_item   = None
         self.chop_prog   = 0.0
         self.chopping    = False
+        self.chop_hits   = 0
 
         self.pot_items   = []
         self.pot_prog    = 0.0
         self.pot_cooking = False
+        self.pot_stirs   = 0
         self.pot_cooked  = False
         self.pot_burn    = 0.0
         self.pot_on      = False
@@ -43,8 +53,8 @@ class Station:
         events = []
         if self.kind == "chop" and self.chopping and self.chop_item \
                 and not self.chop_item.get("chopped"):
-            self.chop_prog = min(1.0, self.chop_prog + dt / CHOP_TIME)
-            if self.chop_prog >= 1.0:
+            self.chop_prog = min(1.0, self.chop_hits / float(CHOP_ACTIONS))
+            if self.chop_hits >= CHOP_ACTIONS:
                 self.chop_item["chopped"] = True
                 self.chop_item["id"] += "_c"
                 self.chop_item["label"] = "Chopped " + self.chop_item["label"]
@@ -53,15 +63,15 @@ class Station:
 
         if self.kind == "pot":
             if self.pot_cooking and not self.pot_cooked:
-                self.pot_prog = min(1.0, self.pot_prog + dt / COOK_TIME)
-                if self.pot_prog >= 1.0:
+                self.pot_prog = min(1.0, self.pot_stirs / float(STIR_ACTIONS))
+                if self.pot_stirs >= STIR_ACTIONS:
                     self.pot_cooked  = True
                     self.pot_cooking = False
                     self.pot_burn    = 0.0
                     events.append("cook_done")
-            elif self.pot_cooked and self.pot_items:
+            elif self.pot_cooked and self.pot_items and not self.pot_burned:
                 self.pot_burn += dt
-                if self.pot_burn >= BURN_TIME and not self.pot_burned:
+                if self.pot_burn >= BURN_TIME:
                     self.pot_burned = True
                     events.append("burned")
 
@@ -137,7 +147,7 @@ class Station:
                 bar(surf, self.x + 2, self.y - 9, self.w - 4, 5, self.pot_prog, (40, 40, 40), col_f, 2)
 
             if self.pot_cooked and self.pot_items:
-                burn_pct = self.pot_burn / BURN_TIME
+                burn_pct = min(1.0, self.pot_burn / BURN_TIME)
                 col_b = C["burn"] if burn_pct < 0.7 else C["red"]
                 bar(surf, self.x + 2, self.y - 16, self.w - 4, 4, burn_pct, (30, 20, 20), col_b, 2)
 
