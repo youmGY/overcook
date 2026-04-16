@@ -53,9 +53,10 @@ def main() -> None:
             fh, fw = frame.shape[:2]
             y_cursor = 80
             for hi in inputs:
-                color = (0, 255, 0) if hi.gesture_confirmed else (200, 200, 200)
+                color = (0, 255, 0) if hi.gesture_confirmed else (220, 220, 220)
                 if hi.stale:
-                    color = (100, 100, 100)
+                    color = (150, 150, 150)
+                bg_color = (0, 0, 0)
                 slot_txt = f" slot={hi.target_slot}" if hi.target_slot else ""
                 motion_txt = f" motion={hi.motion}" if hi.motion else ""
                 text = (
@@ -64,7 +65,11 @@ def main() -> None:
                 )
                 cv2.putText(
                     frame, text, (10, y_cursor),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, bg_color, 3, cv2.LINE_AA,
+                )
+                cv2.putText(
+                    frame, text, (10, y_cursor),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1, cv2.LINE_AA,
                 )
                 y_cursor += 22
 
@@ -84,12 +89,21 @@ def main() -> None:
             if now < flash_until and flash_text:
                 cv2.putText(
                     frame, flash_text, (fw // 2 - 140, fh // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 165, 255), 4, cv2.LINE_AA,
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 6, cv2.LINE_AA,
+                )
+                cv2.putText(
+                    frame, flash_text, (fw // 2 - 140, fh // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 165, 255), 3, cv2.LINE_AA,
                 )
 
             # FPS
+            fps_text = f"FPS: {pipe.fps:5.1f}"
             cv2.putText(
-                frame, f"FPS: {pipe.fps:5.1f}", (10, 24),
+                frame, fps_text, (10, 24),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4, cv2.LINE_AA,
+            )
+            cv2.putText(
+                frame, fps_text, (10, 24),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA,
             )
 
