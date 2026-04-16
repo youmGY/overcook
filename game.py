@@ -562,8 +562,8 @@ class Game:
             st("ing", 3.45, ing_id="onion",    label="Onion"),
             st("ing", 5.15, ing_id="mushroom", label="Mushroom"),
             st("ing", 6.85, ing_id="rice",     label="Rice"),
-            Station("trash",  int(T*8.2),         int(gy - T*1.3), label="Trash"),  # moved to ingredient level
-            Station("chop",   int(T*9.2),         int(gy - T*1.3), label="Chop"),
+            Station("trash",  int(T*8.55),        int(gy - T*1.3), label="Trash"),  # keep same spacing with ingredients
+            Station("chop",   int(gw - T*6.5),    int(gy - T*1.3), label="Chop"),  # keep spacing from stove side
             Station("pot",    int(gw - T*5.0),    int(gy - T*1.3), label="Pot ①"),
             Station("pot",    int(gw - T*3.2),    int(gy - T*1.3), label="Pot ②"),
             Station("plate",  int(gw - T*1.4),    int(gy - T*1.3), label="Plate"),
