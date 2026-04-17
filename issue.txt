@@ -1,0 +1,7 @@
+ISSUE LIST
+1. chop 동작 fix 필요
+** 필요 동작 **
+- Chopping 완료 + 새 재료 넣기 → 완료된 재료 손에 들고 + 새 재료 넣어서 chopping 시작
+- Chopping 중 + 새 재료 넣기 → 아무 동작 안하고 wait for chopping to finish 이런 말만 출력
+- 빈 board + 새 재료 넣기 → 새 재료 chopping 시작
+** issue **

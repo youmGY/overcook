@@ -3,7 +3,7 @@ import os
 
 pygame.init()
 
-W, H = 1024, 800
+W, H = 1024, 600
 screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
 pygame.display.set_caption("Cooking Game")
 clock = pygame.time.Clock()
