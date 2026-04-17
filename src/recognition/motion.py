@@ -97,9 +97,6 @@ _COOLDOWN_S = 0.3
 #  Sliding-window oscillation parameters (from gshan branch)
 # ---------------------------------------------------------------------------
 
-# Sliding window frame count (~1.5s @ 30fps)
-_BUFFER_SIZE = 45
-
 # Minimum direction reversals with sufficient amplitude for chop/stir
 _OSCILLATION_MIN = 3
 
@@ -141,9 +138,13 @@ class HandFlags:
 class MotionDebug:
     """Per-hand debug snapshot exposed for tuning overlays."""
 
-    # Oscillation counts
+    # Cumulative oscillation counts (monotonically increasing until buffer reset)
     chop_osc: int = 0
     stir_osc: int = 0
+
+    # Delta this frame (new strokes since last frame)
+    chop_delta: int = 0
+    stir_delta: int = 0
 
     # Full-buffer amplitudes
     y_amp: float = 0.0
@@ -181,8 +182,8 @@ def _count_oscillations(buf: np.ndarray, amp_threshold: float) -> int:
     if n < 10:
         return 0
 
-    # Light smoothing to remove hand tremor noise
-    k = max(3, n // 10)
+    # Fixed-size smoothing kernel (not proportional to buffer length)
+    k = 5
     s = np.convolve(buf, np.ones(k) / k, mode="valid")
 
     if len(s) < 3:
@@ -216,8 +217,8 @@ def _count_oscillations(buf: np.ndarray, amp_threshold: float) -> int:
 
 @dataclass
 class _HandMotionState:
-    wy: Deque[float] = field(default_factory=lambda: deque(maxlen=_BUFFER_SIZE))
-    wx: Deque[float] = field(default_factory=lambda: deque(maxlen=_BUFFER_SIZE))
+    wy: Deque[float] = field(default_factory=deque)  # unbounded
+    wx: Deque[float] = field(default_factory=deque)  # unbounded
     last_wrist_pos: Optional[Tuple[float, float]] = None
     wrist_absent: int = 999
     wrist_speed: float = 0.0
@@ -225,6 +226,9 @@ class _HandMotionState:
     still_counter: int = 0
     hold_counter: int = 0
     held_gesture: Optional[str] = None  # MOTION_CHOP or MOTION_STIR or None
+    # Previous oscillation counts for delta-based counting
+    prev_chop_osc: int = 0
+    prev_stir_osc: int = 0
 
 
 class MotionDetector:
@@ -260,7 +264,7 @@ class MotionDetector:
         hand_flags: Dict[str, HandFlags],
         hand_wrists: Optional[Dict[str, Optional[Tuple[float, float]]]] = None,
         now: Optional[float] = None,
-    ) -> Dict[str, Tuple[Optional[str], float]]:
+    ) -> Dict[str, Tuple[Optional[str], float, int]]:
         """Feed per-hand flag snapshot + hand wrist positions.
 
         Args:
@@ -270,9 +274,10 @@ class MotionDetector:
                 Keys: "left", "right".
 
         Returns:
-            mapping {"left": (label_or_None, confidence),
+            mapping {"left": (label_or_None, confidence, count),
                      "right": (...),
-                     "both": (two_hand_event_or_None, conf)}
+                     "both": (two_hand_event_or_None, conf, 0)}
+            count = new motion strokes this frame (0, 1, or rarely 2+).
         """
         if now is None:
             now = perf_counter()
@@ -280,10 +285,10 @@ class MotionDetector:
         if hand_wrists is None:
             hand_wrists = {}
 
-        results: Dict[str, Tuple[Optional[str], float]] = {
-            "left": (None, 0.0),
-            "right": (None, 0.0),
-            "both": (None, 0.0),
+        results: Dict[str, Tuple[Optional[str], float, int]] = {
+            "left": (None, 0.0, 0),
+            "right": (None, 0.0, 0),
+            "both": (None, 0.0, 0),
         }
 
         # --- per-hand chop/stir detection via oscillation counting ---
@@ -322,6 +327,8 @@ class MotionDetector:
                 if st.still_counter >= _STILL_RESET_FRAMES:
                     st.wy.clear()
                     st.wx.clear()
+                    st.prev_chop_osc = 0
+                    st.prev_stir_osc = 0
             else:
                 st.still_counter = 0
 
@@ -341,6 +348,12 @@ class MotionDetector:
                 r_x_amp = float(wx_arr[-recent_n:].max() - wx_arr[-recent_n:].min())
             else:
                 r_y_amp = r_x_amp = 0.0
+
+            # Delta: new strokes since last frame
+            chop_delta = max(0, chop_osc - st.prev_chop_osc)
+            stir_delta = max(0, stir_osc - st.prev_stir_osc)
+            st.prev_chop_osc = chop_osc
+            st.prev_stir_osc = stir_osc
 
             # Chop / stir judgment
             is_chop = (
@@ -375,10 +388,16 @@ class MotionDetector:
             else:
                 output = None
 
+            # Only emit delta for the active motion type
+            active_chop_delta = chop_delta if output == MOTION_CHOP else 0
+            active_stir_delta = stir_delta if output == MOTION_STIR else 0
+
             # Populate debug
             self.debug[hand] = MotionDebug(
                 chop_osc=chop_osc,
                 stir_osc=stir_osc,
+                chop_delta=active_chop_delta,
+                stir_delta=active_stir_delta,
                 y_amp=y_amp,
                 x_amp=x_amp,
                 r_y_amp=r_y_amp,
@@ -391,7 +410,8 @@ class MotionDetector:
 
             if output is not None:
                 conf = min(1.0, max(r_y_amp, r_x_amp) / _OSCILLATION_AMP)
-                results[hand] = (output, conf)
+                count = active_chop_delta + active_stir_delta
+                results[hand] = (output, conf, count)
 
         # --- two-hand events --------------------------------------------------
         lw = hand_wrists.get("left")
@@ -411,7 +431,7 @@ class MotionDetector:
             ):
                 self._last_together_t = now
                 conf = min(1.0, 1.0 - dist / _HANDS_TOGETHER_DIST)
-                results["both"] = (MOTION_HANDS_TOGETHER, conf)
+                results["both"] = (MOTION_HANDS_TOGETHER, conf, 0)
                 together_fired = True
         else:
             self._together_streak = 0
@@ -435,6 +455,6 @@ class MotionDetector:
             and (now - self._last_palms_down_t) >= _COOLDOWN_S
         ):
             self._last_palms_down_t = now
-            results["both"] = (MOTION_PALMS_DOWN, 1.0)
+            results["both"] = (MOTION_PALMS_DOWN, 1.0, 0)
 
         return results

@@ -34,6 +34,7 @@ class HandInput:
     gesture_confirmed: bool                # debounce-confirmed this frame
     motion: Optional[str]                  # chop/stir/hands_together/palms_down/thumbs_up/None
     motion_confidence: float               # 0.0~1.0
+    motion_count: int = 0                  # new chop/stir strokes this frame (0, 1, rarely 2+)
     stale: bool = False
 
 
@@ -145,7 +146,7 @@ class RecognitionPipeline:
 
         # Motion detection (chop / stir / hands_together / palms_down)
         motion_results = self._motion.update(hand_flags, hand_wrists)
-        both_label, both_conf = motion_results.get("both", (None, 0.0))
+        both_label, both_conf, _both_cnt = motion_results.get("both", (None, 0.0, 0))
 
         outputs: List[HandInput] = []
         for hand_id in ("left", "right"):
@@ -154,16 +155,18 @@ class RecognitionPipeline:
             label = per_hand_label[hand_id]
             count = per_hand_count[hand_id]
             confirmed = per_hand_confirmed[hand_id]
-            per_motion, per_conf = motion_results.get(hand_id, (None, 0.0))
+            per_motion, per_conf, per_count = motion_results.get(hand_id, (None, 0.0, 0))
 
             if both_label is not None:
                 per_motion = both_label
                 per_conf = max(per_conf, both_conf)
+                per_count = 0  # two-hand events have no stroke count
 
             # Promote thumbs_up gesture → motion field on confirmation frame
             if per_motion is None and label == LABEL_THUMBS_UP and confirmed:
                 per_motion = LABEL_THUMBS_UP
                 per_conf = 1.0
+                per_count = 0
 
             outputs.append(
                 HandInput(
@@ -175,6 +178,7 @@ class RecognitionPipeline:
                     gesture_confirmed=confirmed,
                     motion=per_motion,
                     motion_confidence=float(per_conf),
+                    motion_count=per_count,
                     stale=state.stale,
                 )
             )

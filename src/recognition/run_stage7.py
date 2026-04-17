@@ -40,7 +40,8 @@ def main() -> None:
         log_writer = csv.writer(log_file)
         log_writer.writerow([
             "time", "hand", "gesture", "gesture_confirmed", "motion_event",
-            "chop_osc", "stir_osc",
+            "motion_count",
+            "chop_osc", "chop_delta", "stir_osc", "stir_delta",
             "y_amp", "x_amp", "r_y_amp", "r_x_amp",
             "wrist_speed", "still_counter", "raw", "hold_counter",
         ])
@@ -75,7 +76,11 @@ def main() -> None:
                     color = (150, 150, 150)
                 bg_color = (0, 0, 0)
                 slot_txt = f" slot={hi.target_slot}" if hi.target_slot else ""
-                motion_txt = f" motion={hi.motion}" if hi.motion else ""
+                motion_txt = ""
+                if hi.motion:
+                    motion_txt = f" motion={hi.motion}"
+                    if hi.motion_count > 0:
+                        motion_txt += f" +{hi.motion_count}"
                 text = (
                     f"{hi.hand_id[0].upper()}: {hi.gesture}"
                     f" (n={hi.finger_count}){slot_txt}{motion_txt}"
@@ -122,7 +127,8 @@ def main() -> None:
                     log_writer.writerow([
                         f"{elapsed:.3f}", hi.hand_id, hi.gesture,
                         hi.gesture_confirmed, hi.motion or "",
-                        d.chop_osc, d.stir_osc,
+                        hi.motion_count,
+                        d.chop_osc, d.chop_delta, d.stir_osc, d.stir_delta,
                         f"{d.y_amp:.4f}", f"{d.x_amp:.4f}",
                         f"{d.r_y_amp:.4f}", f"{d.r_x_amp:.4f}",
                         f"{d.wrist_speed:.4f}", d.still_counter,
@@ -139,10 +145,12 @@ def main() -> None:
                     f"{hand[0].upper()} spd={d.wrist_speed:.3f}"
                     f" still={d.still_counter} raw={d.raw} hold={d.hold_counter}"
                 )
-                # Line 2: oscillation counts + amplitudes
+                # Line 2: oscillation counts + deltas + amplitudes
                 line2 = (
-                    f"  CHOP osc={d.chop_osc} y={d.y_amp:.3f}({d.r_y_amp:.3f})"
-                    f" | STIR osc={d.stir_osc} x={d.x_amp:.3f}({d.r_x_amp:.3f})"
+                    f"  CHOP osc={d.chop_osc}(+{d.chop_delta})"
+                    f" y={d.y_amp:.3f}({d.r_y_amp:.3f})"
+                    f" | STIR osc={d.stir_osc}(+{d.stir_delta})"
+                    f" x={d.x_amp:.3f}({d.r_x_amp:.3f})"
                 )
                 for txt in (line2, line1):
                     cv2.putText(
