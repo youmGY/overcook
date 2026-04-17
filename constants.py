@@ -47,7 +47,7 @@ ING_KEYS = list(INGS.keys())
 RECIPES = [
     {"name": "Tomato Soup", "pts": 100, "needs": ["tomato_c","onion_c"], "cook": True,
      "steps": ["CHOP Tomato & Onion", "Add to Stove & Cook"]},
-    {"name": "Fried Rice", "pts": 110, "needs": ["rice","tomato_c"], "cook": True,
+    {"name": "Fried Rice", "pts": 110, "needs": ["tomato_c","rice"], "cook": True,
      "steps": ["CHOP Tomato", "Get Rice",  "Add both to Stove & Cook"]},
     {"name": "Mushroom Stir-fry", "pts": 90, "needs": ["mushroom_c","onion_c"], "cook": True,
      "steps": ["CHOP Mushroom & Onion", "Add to Stove & Quick Cook"]},
