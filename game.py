@@ -340,7 +340,7 @@ class Game:
             # Left side: 2×2 grid  (OK / Chop Chop on top, Stir Stir / Pause on bottom)
             # Right side: camera panel
             avail_h = gh - y - pad
-            btn_h   = max(28, (avail_h - gap) // 2)
+            btn_h   = max(50, (avail_h - gap) // 2)
             left_w  = (gw - pad * 2) * 2 // 3         # left 2/3 for buttons (2 cols)
             btn_w   = (left_w - gap) // 2
 
@@ -363,7 +363,7 @@ class Game:
             self._cam_slot_rect = pygame.Rect(cam_x, y, cam_w, avail_h)
         else:
             # test: classic 4-button horizontal row
-            bh    = max(28, (gh - gy - 24) // 2 - 4)
+            bh    = max(50, (gh - gy - 24) // 2 - 4)
             n_act = 4
             right_w = gw - pad * 2
             aw = (right_w - gap * (n_act - 1)) // n_act

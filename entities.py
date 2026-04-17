@@ -20,6 +20,42 @@ from utils import rr, bar
 COMPLETED_FOOD_DIR = "assets/ccompleted_foods"
 _COMPLETED_IMG_CACHE = {}
 
+# Station icon images mapping
+STATION_ICONS = {
+    "ing": "assets/stations/pantry.png",
+    "chop": "assets/stations/chop.png",
+    "pot": "assets/stations/stove.png",
+    "submit": "assets/stations/submit.png",
+    "trash": "assets/stations/trash.png",
+}
+_STATION_ICON_CACHE = {}
+
+
+def _load_station_icon(kind, max_size):
+    """Load station icon from assets/stations folder, maintaining aspect ratio."""
+    key = (kind, max_size)
+    if key in _STATION_ICON_CACHE:
+        return _STATION_ICON_CACHE[key]
+
+    path = STATION_ICONS.get(kind)
+    if not path or not os.path.exists(path):
+        _STATION_ICON_CACHE[key] = None
+        return None
+
+    try:
+        img = pygame.image.load(path).convert_alpha()
+        # Get original aspect ratio and scale to fit within max_size
+        orig_w, orig_h = img.get_size()
+        ratio = min(max_size / orig_w, max_size / orig_h)
+        new_w = max(1, int(orig_w * ratio))
+        new_h = max(1, int(orig_h * ratio))
+        img = pygame.transform.smoothscale(img, (new_w, new_h))
+        _STATION_ICON_CACHE[key] = img
+        return img
+    except Exception:
+        _STATION_ICON_CACHE[key] = None
+        return None
+
 
 def _load_completed_food_img(filename, w, h):
     key = (filename, w, h)
@@ -68,8 +104,8 @@ def _get_completed_food_img(holding, w, h):
 
 
 class Station:
-    SW = 110
-    SH = 28
+    SW = 160
+    SH = 50
 
     def __init__(self, kind, sx, sy):
         self.kind = kind
@@ -146,7 +182,7 @@ class Station:
         rr(surf, top, (self.x, self.y, self.w, self.h), 6)
         surf.fill((255, 255, 255, 15), (self.x + 5, self.y + 2, self.w - 10, 3))
 
-        s = F[12].render(self._station_label(), True, (220, 220, 220))
+        s = F[14].render(self._station_label(), True, (220, 220, 220))
         surf.blit(s, (self.cx() - s.get_width() // 2, self.cy() - s.get_height() // 2))
 
         ix, iy = self.cx(), self.y - 18
@@ -162,6 +198,17 @@ class Station:
         return ""
 
     def _draw_icon(self, surf, ix, iy):
+        # Try to load icon image from assets
+        icon_img = _load_station_icon(self.kind, 60)
+        if icon_img:
+            img_w, img_h = icon_img.get_size()
+            # Center horizontally, align bottom vertically
+            x = ix - img_w // 2
+            y = iy - img_h + 10
+            surf.blit(icon_img, (int(x), int(y)))
+            return
+
+        # Fallback to original drawing code if image not found
         if self.kind == "ing":
             rr(surf, C["ing_top"], (ix - 14, iy - 10, 28, 20), 4)
             t = F[12].render("INGs", True, (255, 255, 255))
