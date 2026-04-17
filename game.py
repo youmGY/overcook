@@ -9,11 +9,17 @@
 """
 
 import dataclasses
+import argparse
 import pygame
 import sys
 import random
 import logging
 from typing import Optional
+
+try:
+    import cv2
+except Exception:
+    cv2 = None
 
 from engine import screen, clock, FPS, F, get_img
 from constants import C, INGS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
@@ -44,6 +50,7 @@ GESTURE_STATION_SLOTS: dict[int, str] = {
 @dataclasses.dataclass
 class GameInput:
     move_to_slot: Optional[int] = None
+    station_click: Optional[tuple] = None
     chop:         bool = False
     stir:         bool = False
     put_down:     bool = False
@@ -54,12 +61,44 @@ class GameInput:
 
 
 class Game:
-    def __init__(self):
+    def __init__(self, ui_mode: str = "active"):
+        self.ui_mode = ui_mode
+        self.use_camera_ui = ui_mode != "test"
+        self._camera = None
+        self._camera_error = None
+        self._act_btn_info = self._build_act_btn_info()
+
+        if self.use_camera_ui:
+            self._init_camera()
+
         self.state = "title"
         self.overlay = IngredientOverlay()
         self.recipe_overlay = RecipeOverlay()
         self._make_btns()
         self.reset()
+
+    def _build_act_btn_info(self):
+        return [
+            ("confirm", "OK", (60, 120, 60)),
+            ("chop", "Chop Chop", (120, 80, 30)),
+            ("stir", "Stir Stir", (30, 80, 120)),
+            ("pause", "Pause", (80, 60, 80)),
+        ]
+
+    def _init_camera(self):
+        if cv2 is None:
+            self._camera_error = "OpenCV(cv2) not installed"
+            return
+        cam = cv2.VideoCapture(0)
+        if not cam or not cam.isOpened():
+            self._camera_error = "Camera open failed"
+            return
+        self._camera = cam
+
+    def shutdown(self):
+        if self._camera:
+            self._camera.release()
+            self._camera = None
 
     def reset(self):
         log.info("--- GAME RESET ---")
@@ -101,50 +140,123 @@ class Game:
         gy = self._gy()
         station_top = gy - Station.SH - 36 - 40
         pad = 8
-        return (pad, HUD_H + pad, gw - pad * 2, station_top - HUD_H - pad * 2)
+        full_h = max(70, station_top - HUD_H - pad * 2)
+        reduced_h = int(full_h * 0.82)
+        return (pad, HUD_H + pad, gw - pad * 2, reduced_h)
 
-    _SLOT_BTN_INFO = [
-        (1, "🗑 Trash",   (80, 50, 50)),
-        (2, "🥬 Pantry",  (50, 80, 50)),
-        (3, "🔪 Chop",    (80, 70, 30)),
-        (4, "🍳 Stove",   (30, 60, 100)),
-        (5, "🍽 Submit",  (70, 30, 100)),
-    ]
-    _ACT_BTN_INFO = [
-        ("confirm",  "✓ OK",      (60, 120, 60)),
-        ("chop",     "Chop!",     (120, 80, 30)),
-        ("stir",     "Stir!",     (30, 80, 120)),
-        ("pause",    "⏸ Pause",   (80, 60, 80)),
-    ]
+    def _camera_rect_from_controls(self):
+        return getattr(self, "_cam_slot_rect", None)
+
+    def _draw_camera_panel(self):
+        if not self.use_camera_ui:
+            return
+        rect = self._camera_rect_from_controls()
+        if rect is None:
+            return
+
+        rr(screen, (18, 20, 28), rect, 8)
+        pygame.draw.rect(screen, (55, 65, 85), rect, 1, border_radius=8)
+
+        frame_surf = self._capture_camera_surface(rect.w - 8, rect.h - 8)
+        inner = pygame.Rect(rect.x + 4, rect.y + 4, rect.w - 8, rect.h - 8)
+        if frame_surf:
+            screen.blit(frame_surf, inner.topleft)
+        else:
+            pygame.draw.rect(screen, (30, 34, 48), inner, border_radius=6)
+            msg = self._camera_error or "Camera not ready"
+            s = F[12].render(msg, True, (190, 190, 210))
+            screen.blit(s, (inner.centerx - s.get_width() // 2, inner.centery - s.get_height() // 2))
+
+    def _capture_camera_surface(self, w: int, h: int):
+        if not self._camera:
+            return None
+        ok, frame = self._camera.read()
+        if not ok or frame is None:
+            self._camera_error = "Camera frame read failed"
+            return None
+
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = cv2.flip(frame, 1)
+
+        # Keep original camera aspect ratio and pad with black bars.
+        src_h, src_w = frame.shape[:2]
+        scale = min(w / float(src_w), h / float(src_h))
+        new_w = max(1, int(src_w * scale))
+        new_h = max(1, int(src_h * scale))
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        pad_x = w - new_w
+        pad_y = h - new_h
+        left = pad_x // 2
+        right = pad_x - left
+        top = pad_y // 2
+        bottom = pad_y - top
+        frame = cv2.copyMakeBorder(
+            resized,
+            top,
+            bottom,
+            left,
+            right,
+            cv2.BORDER_CONSTANT,
+            value=(0, 0, 0),
+        )
+
+        frame = frame.swapaxes(0, 1)
+        return pygame.surfarray.make_surface(frame)
 
     def _make_btns(self):
         gw, gh = screen.get_size()
         gy = self._gy()
-        bh = (gh - gy - 24) // 2 - 4
-        bh = max(bh, 28)
-        y  = gy + 8
+        y   = gy + 8
         pad = 8
-        n_slot = len(self._SLOT_BTN_INFO)
-        n_act  = len(self._ACT_BTN_INFO)
-        
-        left_w = gw // 2 - pad * 2
-        sw = (left_w - (n_slot - 1) * 4) // n_slot
-        self.btn_slots = []
-        for i, (slot, lbl, col) in enumerate(self._SLOT_BTN_INFO):
-            bx = pad + i * (sw + 4)
-            self.btn_slots.append(Btn(bx, y, sw, bh, lbl, col))
-            
-        right_start = gw // 2 + pad
-        right_w = gw - right_start - pad
-        aw = (right_w - (n_act - 1) * 4) // n_act
+        gap = 4
         self.btn_acts = []
-        for i, (_, lbl, col) in enumerate(self._ACT_BTN_INFO):
-            bx = right_start + i * (aw + 4)
-            self.btn_acts.append(Btn(bx, y, aw, bh, lbl, col))
-            
-        self.btn_left   = self.btn_slots[1]
-        self.btn_right  = self.btn_slots[3]
-        self.btn_action = self.btn_acts[0]
+        self.btn_acts_map = {}
+
+        if self.use_camera_ui:
+            # Left side: 2×2 grid  (OK / Chop Chop on top, Stir Stir / Pause on bottom)
+            # Right side: camera panel
+            avail_h = gh - y - pad
+            btn_h   = max(28, (avail_h - gap) // 2)
+            left_w  = (gw - pad * 2) * 2 // 3         # left 2/3 for buttons (2 cols)
+            btn_w   = (left_w - gap) // 2
+
+            grid = [
+                (0, 0, "chop",    "Chop Chop", (120, 80,  30)),
+                (1, 0, "stir",    "Stir Stir", ( 30, 80, 120)),
+                (0, 1, "confirm", "OK",        ( 60, 120,  60)),
+                (1, 1, "pause",   "Pause",     ( 80, 60,  80)),
+            ]
+            for col, row, key, lbl, col_c in grid:
+                bx = pad + col * (btn_w + gap)
+                by = y  + row * (btn_h + gap)
+                btn = Btn(bx, by, btn_w, btn_h, lbl, col_c)
+                self.btn_acts.append(btn)
+                self.btn_acts_map[key] = btn
+
+            # Camera slot: right 1/3
+            cam_x = pad + left_w + gap
+            cam_w = gw - cam_x - pad
+            self._cam_slot_rect = pygame.Rect(cam_x, y, cam_w, avail_h)
+        else:
+            # test: classic 4-button horizontal row
+            bh    = max(28, (gh - gy - 24) // 2 - 4)
+            n_act = 4
+            right_w = gw - pad * 2
+            aw = (right_w - gap * (n_act - 1)) // n_act
+            for i, (key, lbl, col_c) in enumerate([
+                ("confirm", "OK",        (60, 120, 60)),
+                ("chop",    "Chop Chop", (120, 80, 30)),
+                ("stir",    "Stir Stir", (30,  80, 120)),
+                ("pause",   "Pause",     (80,  60, 80)),
+            ]):
+                bx = pad + i * (aw + gap)
+                btn = Btn(bx, y, aw, bh, lbl, col_c)
+                self.btn_acts.append(btn)
+                self.btn_acts_map[key] = btn
+            self._cam_slot_rect = None
+
+        self.btn_action = self.btn_acts_map["confirm"]
         self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 70, 110, 52, "Start", (50, 50, 130))
         self.btn_pause_continue = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "▶ Continue", (40, 120, 60))
         self.btn_pause_restart  = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "↺ Restart",  (120, 50, 50))
@@ -170,6 +282,15 @@ class Game:
             idle = [s for s in group if not s.pot_cooking and not s.pot_cooked]
             return idle[0] if idle else group[0]
         return group[0]
+
+    def _station_at_point(self, pos):
+        if not pos:
+            return None
+        x, y = pos
+        for st in self.stations:
+            if pygame.Rect(st.x, st.y, st.w, st.h).collidepoint(x, y):
+                return st
+        return None
 
     def _find_submit_dish(self):
         h = self.player.holding
@@ -461,8 +582,11 @@ class Game:
         if self.recipe_overlay.active: return
 
         move_to_slot = gi.move_to_slot
-        for i, (slot, _, _c) in enumerate(self._SLOT_BTN_INFO):
-            if self.btn_slots[i].update(mpos, mpressed): move_to_slot = slot
+        clicked_station = self._station_at_point(gi.station_click)
+        if clicked_station:
+            self.player.x = float(clicked_station.cx() - Player.PW // 2)
+            self.player.y = float(self._gy() - Player.PH)
+            self.player.vy = 0.0
 
         act_flags = {
             "confirm":  gi.confirm  or gi.action,
@@ -470,8 +594,11 @@ class Game:
             "stir":     gi.stir,
             "pause":    False,
         }
-        for i, (key, _, _c) in enumerate(self._ACT_BTN_INFO):
-            if self.btn_acts[i].update(mpos, mpressed): act_flags[key] = True
+
+        for btn in self.btn_acts:
+            key = next(k for k, v in self.btn_acts_map.items() if v is btn)
+            if btn.update(mpos, mpressed):
+                act_flags[key] = True
 
         if act_flags["pause"]:
             self.state = "paused"
@@ -562,8 +689,9 @@ class Game:
             self._draw_recipes_panel()
 
         if self.state == "play":
-            for btn in self.btn_slots: btn.draw(screen)
-            for btn in self.btn_acts: btn.draw(screen)
+            for btn in self.btn_acts:
+                btn.draw(screen)
+            self._draw_camera_panel()
 
     def _draw_recipes_panel(self):
         rx, ry, rw, rh = self._recipe_panel_rect()
@@ -689,7 +817,7 @@ class Game:
         screen.fill(C["bg"])
         txt(screen, "🍳 Cooking Game", 40, C["gold"], gw // 2, gh // 2 - 110)
         lines = [
-            "Use screen buttons  (◀ ▶ move  |  Action = interact)",
+            "Tap/click a station to move there  |  Action = interact",
             "Keyboard: arrow keys + Z/Space also work",
             "",
             "Pantry → pick ingredient   |   Chop board → OK to place, Chop! to chop",
@@ -725,10 +853,22 @@ class Game:
 
 
 def main():
-    game = Game()
+    parser = argparse.ArgumentParser(description="Overcook-style pygame game")
+    parser.add_argument("-test", action="store_true", help="Use test button labels")
+    parser.add_argument("-active", action="store_true", help="Show camera feed instead of action buttons")
+    args = parser.parse_args()
+
+    ui_mode = "normal"
+    if args.test:
+        ui_mode = "test"
+    if args.active:
+        ui_mode = "active"
+
+    game = Game(ui_mode=ui_mode)
     held      = {"left": False, "right": False}
     _gi_frame: dict = {}
     mpressed     = False
+    station_click = None
     overlay_click = None
 
     _SLOT_KEYS = {
@@ -739,10 +879,12 @@ def main():
     while True:
         dt = min(clock.tick(FPS) / 1000.0, 0.05)
         _gi_frame = {}
+        station_click = None
         overlay_click = None
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                game.shutdown()
                 pygame.quit(); sys.exit()
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = True
@@ -770,13 +912,17 @@ def main():
                     elif game.overlay.active: game.overlay.active = False
                     elif game.state == "play": game.state = "paused"
                     elif game.state == "paused": game.state = "play"
-                    else: pygame.quit(); sys.exit()
+                    else:
+                        game.shutdown()
+                        pygame.quit(); sys.exit()
             if event.type == pygame.KEYUP:
                 if event.key in (pygame.K_LEFT, pygame.K_a): held["left"]  = False
                 if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mpressed = True
-                if game.overlay.active: overlay_click = pygame.mouse.get_pos()
+                click_pos = pygame.mouse.get_pos()
+                if game.overlay.active: overlay_click = click_pos
+                else: station_click = click_pos
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
 
@@ -788,6 +934,7 @@ def main():
         gi = GameInput(
             move_dir     = move_dir,
             move_to_slot = _gi_frame.get("move_to_slot"),
+            station_click= station_click,
             confirm      = _gi_frame.get("confirm",  False),
             chop         = _gi_frame.get("chop",     False),
             stir         = _gi_frame.get("stir",     False),
