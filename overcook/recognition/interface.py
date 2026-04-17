@@ -17,7 +17,7 @@ from .gesture import (
     landmarks_to_numpy,
     target_slot_for,
 )
-from .hand_split import HandSplitter
+from .splitter import HandSplitter
 from .hand_tracker import HandTracker, HandTrackerConfig
 from .motion import MotionDebug, MotionDetector
 

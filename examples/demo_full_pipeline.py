@@ -8,9 +8,9 @@ from time import perf_counter
 
 import cv2
 
-from .camera import CameraConfig
-from .hand_tracker import HandTrackerConfig
-from .interface import RecognitionPipeline
+from overcook.recognition.camera import CameraConfig
+from overcook.recognition.hand_tracker import HandTrackerConfig
+from overcook.recognition.interface import RecognitionPipeline
 
 
 def parse_args() -> argparse.Namespace:

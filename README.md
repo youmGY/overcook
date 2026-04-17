@@ -80,12 +80,23 @@ overcook/
 │   ├── game.py               # Game 클래스 (상태 관리, 게임 로직)
 │   │
 │   └── recognition/          # 제스처 인식 모듈
-│       ├── __init__.py
-│       ├── interface.py      # RecognitionPipeline, HandInput
-│       ├── camera.py         # 카메라 캡처
-│       ├── gesture.py        # 제스처 분류
+│       ├── __init__.py       # 공개 API (CameraConfig, RecognitionPipeline, …)
+│       ├── camera.py         # 카메라 캡처 (ThreadedCamera)
+│       ├── gesture.py        # ONNX 기반 제스처 분류
+│       ├── hand_tracker.py   # MediaPipe 손 랜드마크 추적
+│       ├── interface.py      # 파이프라인 오케스트레이터
 │       ├── motion.py         # 모션 감지 (chop, stir)
-│       └── *.onnx / *.task   # ML 모델 파일
+│       ├── smoothing.py      # EMA 좌표 스무딩
+│       ├── splitter.py       # 좌/우 손 분리 추적
+│       └── models/           # ML 모델 파일
+│           ├── gesture_mlp.onnx
+│           ├── hand_landmarker.task
+│           └── pose_landmarker_lite.task
+│
+├── examples/                 # 데모 스크립트 (런타임 비포함)
+│   ├── demo_hand_tracking.py # 손 추적 데모
+│   ├── demo_full_pipeline.py # 전체 파이프라인 디버그 데모
+│   └── pose_tracker.py       # 포즈 추적 (데모 전용)
 │
 ├── tests/                    # 유닛 테스트
 │   └── test_game.py

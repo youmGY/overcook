@@ -10,7 +10,8 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-_DEFAULT_MODEL = os.path.join(os.path.dirname(__file__), "pose_landmarker_lite.task")
+_MODELS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "overcook", "recognition", "models")
+_DEFAULT_MODEL = os.path.join(_MODELS_DIR, "pose_landmarker_lite.task")
 
 
 @dataclass(frozen=True)

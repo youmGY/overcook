@@ -4,9 +4,9 @@ import argparse
 
 import cv2
 
-from .camera import CameraConfig, open_camera
-from .hand_tracker import HandTracker, HandTrackerConfig
-from .pose_tracker import PoseTracker, PoseTrackerConfig
+from overcook.recognition.camera import CameraConfig, open_camera
+from overcook.recognition.hand_tracker import HandTracker, HandTrackerConfig
+from examples.pose_tracker import PoseTracker, PoseTrackerConfig
 
 
 def parse_args() -> argparse.Namespace:

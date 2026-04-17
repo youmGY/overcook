@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-run-stage7 = "overcook.recognition.run_stage7:main"
+demo-pipeline = "examples.demo_full_pipeline:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["overcook"]

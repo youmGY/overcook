@@ -11,7 +11,7 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-_DEFAULT_MODEL = os.path.join(os.path.dirname(__file__), "hand_landmarker.task")
+_DEFAULT_MODEL = os.path.join(os.path.dirname(__file__), "models", "hand_landmarker.task")
 
 # Hand landmark connections for drawing
 _HAND_CONNECTIONS = [

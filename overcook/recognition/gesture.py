@@ -47,7 +47,7 @@ _LABEL_TO_COUNT = {
     LABEL_UNKNOWN: 0,
 }
 
-_DEFAULT_ONNX = os.path.join(os.path.dirname(__file__), "gesture_mlp.onnx")
+_DEFAULT_ONNX = os.path.join(os.path.dirname(__file__), "models", "gesture_mlp.onnx")
 
 # ---- feature extraction (matches training pipeline) ----
 

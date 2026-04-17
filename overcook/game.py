@@ -89,9 +89,7 @@ class Game:
     def _init_pipeline(self, flip: bool):
         """Initialise the gesture recognition pipeline (lazy import)."""
         try:
-            from .recognition.camera import CameraConfig
-            from .recognition.hand_tracker import HandTrackerConfig
-            from .recognition.interface import RecognitionPipeline
+            from .recognition import CameraConfig, HandTrackerConfig, RecognitionPipeline
             self._pipeline = RecognitionPipeline(
                 camera_cfg=CameraConfig(device_index=0, width=640, height=480, fps=30),
                 hand_cfg=HandTrackerConfig(),

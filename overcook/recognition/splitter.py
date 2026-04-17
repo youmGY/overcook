@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
 
-from .coords import EMASmoother, PALM_LANDMARK_INDEX
+from .smoothing import EMASmoother, PALM_LANDMARK_INDEX
 from .gesture import GestureDebouncer
 
 # How long (seconds) to keep emitting a stale state for a missing hand.
