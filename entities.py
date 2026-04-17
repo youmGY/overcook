@@ -3,7 +3,7 @@ import math
 import time
 import random
 
-from engine import F
+from engine import F, get_img
 from constants import (
     C,
     INGS,
@@ -118,14 +118,22 @@ class Station:
 
         elif self.kind == "chop":
             if self.chop_item:
-                bid = self.chop_item["id"].replace("_c", "")
-                col = INGS.get(bid, {}).get("color", (150, 150, 150))
-                pygame.draw.circle(surf, col, (ix - 8, iy), 9)
-                if self.chop_item.get("chopped"):
-                    pygame.draw.line(surf, C["lime"], (ix - 4, iy + 3), (ix + 8, iy - 5), 2)
+                item_id = self.chop_item["id"]
+                img = get_img(item_id, 18, 18)
+                if img:
+                    surf.blit(img, (ix - 9, iy - 9))
+                    if not self.chop_item.get("chopped"):
+                        bar(surf, self.x + 2, self.y - 8, self.w - 4, 5,
+                            self.chop_prog, (50, 50, 50), C["orange"], 2)
                 else:
-                    bar(surf, self.x + 2, self.y - 8, self.w - 4, 5,
-                        self.chop_prog, (50, 50, 50), C["orange"], 2)
+                    bid = item_id.replace("_c", "")
+                    col = INGS.get(bid, {}).get("color", (150, 150, 150))
+                    pygame.draw.circle(surf, col, (ix - 8, iy), 9)
+                    if self.chop_item.get("chopped"):
+                        pygame.draw.line(surf, C["lime"], (ix - 4, iy + 3), (ix + 8, iy - 5), 2)
+                    else:
+                        bar(surf, self.x + 2, self.y - 8, self.w - 4, 5,
+                            self.chop_prog, (50, 50, 50), C["orange"], 2)
             else:
                 pygame.draw.line(surf, (180, 180, 180), (ix - 10, iy + 8), (ix + 10, iy - 8), 3)
                 pygame.draw.line(surf, (130, 130, 130), (ix + 7, iy - 10), (ix + 12, iy - 5), 2)
@@ -137,10 +145,14 @@ class Station:
             if self.pot_items:
                 n = min(len(self.pot_items), 3)
                 for i, item in enumerate(self.pot_items[:3]):
-                    bid = item["id"].replace("_c", "")
-                    col = INGS.get(bid, {}).get("color", (150, 150, 150))
                     ox = ix + (i - (n - 1) / 2) * 8
-                    pygame.draw.circle(surf, col, (int(ox), iy), 5)
+                    img = get_img(item["id"], 10, 10)
+                    if img:
+                        surf.blit(img, (int(ox) - 5, iy - 5))
+                    else:
+                        bid = item["id"].replace("_c", "")
+                        col = INGS.get(bid, {}).get("color", (150, 150, 150))
+                        pygame.draw.circle(surf, col, (int(ox), iy), 5)
 
             if self.pot_cooking or self.pot_cooked:
                 col_f = C["green"] if self.pot_cooked else C["orange"]
@@ -247,23 +259,35 @@ class Player:
         if self.holding:
             hx = px + 16 + f * 24
             hy = py + 4 + bob
-            bid = self.holding["id"].replace("_c", "")
-            ing = INGS.get(bid, {})
-            col = C["burn"]  if self.holding.get("burned") \
-                 else C["green"] if self.holding.get("cooked") \
-                 else C["lime"]  if self.holding.get("chopped") \
-                 else ing.get("color", (150, 150, 150))
-            pygame.draw.circle(surf, col, (hx, hy), 13)
-            pygame.draw.circle(surf, (255, 255, 255, 50), (hx, hy), 13, 1)
-            if self.holding.get("burned"):
-                lbl = F[12].render("BURN", True, (255, 200, 100))
-            elif self.holding.get("cooked"):
-                lbl = F[12].render("Done", True, (255, 255, 255))
-            elif self.holding.get("chopped"):
-                lbl = F[12].render("Cut", True, (0, 0, 0))
+            item_id = self.holding.get("id", "")
+            
+            img = get_img(item_id, 26, 26)
+            if img:
+                surf.blit(img, (hx - 13, hy - 13))
+                if self.holding.get("burned"):
+                    lbl = F[12].render("BURN", True, (255, 200, 100))
+                    surf.blit(lbl, (hx - lbl.get_width() // 2, hy - lbl.get_height() // 2))
+                elif self.holding.get("cooked"):
+                    lbl = F[12].render("Done", True, (255, 255, 255))
+                    surf.blit(lbl, (hx - lbl.get_width() // 2, hy - lbl.get_height() // 2))
             else:
-                lbl = F[12].render(ing.get("label", "")[:3], True, (0, 0, 0))
-            surf.blit(lbl, (hx - lbl.get_width() // 2, hy - lbl.get_height() // 2))
+                bid = item_id.replace("_c", "")
+                ing = INGS.get(bid, {})
+                col = C["burn"]  if self.holding.get("burned") \
+                     else C["green"] if self.holding.get("cooked") \
+                     else C["lime"]  if self.holding.get("chopped") \
+                     else ing.get("color", (150, 150, 150))
+                pygame.draw.circle(surf, col, (hx, hy), 13)
+                pygame.draw.circle(surf, (255, 255, 255, 50), (hx, hy), 13, 1)
+                if self.holding.get("burned"):
+                    lbl = F[12].render("BURN", True, (255, 200, 100))
+                elif self.holding.get("cooked"):
+                    lbl = F[12].render("Done", True, (255, 255, 255))
+                elif self.holding.get("chopped"):
+                    lbl = F[12].render("Cut", True, (0, 0, 0))
+                else:
+                    lbl = F[12].render(ing.get("label", "")[:3], True, (0, 0, 0))
+                surf.blit(lbl, (hx - lbl.get_width() // 2, hy - lbl.get_height() // 2))
 
 
 class Order:

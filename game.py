@@ -15,8 +15,8 @@ import random
 import logging
 from typing import Optional
 
-from engine import screen, clock, FPS, F
-from constants import C, INGS, ING_KEYS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
+from engine import screen, clock, FPS, F, get_img
+from constants import C, INGS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
 from utils import rr, txt, bar
 from ui import Popup, Btn, RecipeOverlay, IngredientOverlay
 from entities import Station, Player, Order
@@ -32,7 +32,6 @@ logging.basicConfig(
 log = logging.getLogger("overcook")
 
 # ── gesture / unified input ───────────────────────────────────────────────
-# finger_1~5 map to station groups (slot 1-5)
 GESTURE_STATION_SLOTS: dict[int, str] = {
     1: "trash",
     2: "ing",
@@ -44,20 +43,12 @@ GESTURE_STATION_SLOTS: dict[int, str] = {
 
 @dataclasses.dataclass
 class GameInput:
-    """Frame-level input state consumed by Game.update().
-
-    Camera / gesture module fills the gesture fields;
-    keyboard / on-screen buttons fill move_dir / action.
-    Both paths feed the same update() call.
-    """
-    # ── gesture ──────────────────────────────
-    move_to_slot: Optional[int] = None   # 1-5 (finger_1 ~ finger_5)
-    chop:         bool = False           # chop_motion
-    stir:         bool = False           # stir_motion
-    put_down:     bool = False           # palms_down
-    confirm:      bool = False           # thumbs_up
-    # ── keyboard / button fallback ───────────
-    move_dir:      int  = 0              # -1 / 0 / +1
+    move_to_slot: Optional[int] = None
+    chop:         bool = False
+    stir:         bool = False
+    put_down:     bool = False
+    confirm:      bool = False
+    move_dir:      int  = 0
     action:        bool = False
     overlay_click: Optional[tuple] = None
 
@@ -70,7 +61,6 @@ class Game:
         self._make_btns()
         self.reset()
 
-    # ── setup ────────────────────────────────
     def reset(self):
         log.info("--- GAME RESET ---")
         self.score = 0
@@ -113,7 +103,6 @@ class Game:
         pad = 8
         return (pad, HUD_H + pad, gw - pad * 2, station_top - HUD_H - pad * 2)
 
-    # gesture-label → (button label, color)
     _SLOT_BTN_INFO = [
         (1, "🗑 Trash",   (80, 50, 50)),
         (2, "🥬 Pantry",  (50, 80, 50)),
@@ -137,14 +126,14 @@ class Game:
         pad = 8
         n_slot = len(self._SLOT_BTN_INFO)
         n_act  = len(self._ACT_BTN_INFO)
-        # left half → station-slot buttons
+        
         left_w = gw // 2 - pad * 2
         sw = (left_w - (n_slot - 1) * 4) // n_slot
         self.btn_slots = []
         for i, (slot, lbl, col) in enumerate(self._SLOT_BTN_INFO):
             bx = pad + i * (sw + 4)
             self.btn_slots.append(Btn(bx, y, sw, bh, lbl, col))
-        # right half → action buttons
+            
         right_start = gw // 2 + pad
         right_w = gw - right_start - pad
         aw = (right_w - (n_act - 1) * 4) // n_act
@@ -152,16 +141,14 @@ class Game:
         for i, (_, lbl, col) in enumerate(self._ACT_BTN_INFO):
             bx = right_start + i * (aw + 4)
             self.btn_acts.append(Btn(bx, y, aw, bh, lbl, col))
-        # legacy refs used elsewhere
-        self.btn_left   = self.btn_slots[1]   # Pantry as default "left" hint
-        self.btn_right  = self.btn_slots[3]   # Stove as default "right" hint
-        self.btn_action = self.btn_acts[0]    # Confirm
+            
+        self.btn_left   = self.btn_slots[1]
+        self.btn_right  = self.btn_slots[3]
+        self.btn_action = self.btn_acts[0]
         self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 70, 110, 52, "Start", (50, 50, 130))
-        # pause menu buttons
         self.btn_pause_continue = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "▶ Continue", (40, 120, 60))
         self.btn_pause_restart  = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "↺ Restart",  (120, 50, 50))
 
-    # ── station interaction ───────────────────
     def _near(self):
         px, py = self.player.center()
         best, bd = None, 9999
@@ -172,17 +159,10 @@ class Game:
         return best
 
     def _station_for_slot(self, slot: int):
-        """Return the best station for a gesture slot (1-5).
-
-        For grouped kinds (chop, pot) auto-routes to an idle station;
-        falls back to the first in the group if all are busy.
-        """
         kind = GESTURE_STATION_SLOTS.get(slot)
-        if not kind:
-            return None
+        if not kind: return None
         group = [s for s in self.stations if s.kind == kind]
-        if not group:
-            return None
+        if not group: return None
         if kind == "chop":
             idle = [s for s in group if not s.chop_item and not s.chopping]
             return idle[0] if idle else group[0]
@@ -193,13 +173,11 @@ class Game:
 
     def _find_submit_dish(self):
         h = self.player.holding
-        if h and h.get("cooked"):
-            return h, True
+        if h and h.get("cooked"): return h, True
         return None, False
 
     def _clear_submit_source(self, from_holding: bool):
-        if from_holding:
-            self.player.holding = None
+        if from_holding: self.player.holding = None
 
     def _act_ing(self, _st):
         if not self.player.holding:
@@ -217,7 +195,6 @@ class Game:
             if not base or not INGS.get(base, {}).get("can_chop"):
                 self._pop(self.player.x, self.player.y - 20, "Can't chop this!", C["red"])
                 return
-
             if st.chop_item:
                 self._pop(self.player.x, self.player.y - 20, "Board occupied", C["orange"])
                 return
@@ -264,14 +241,12 @@ class Game:
             if st.pot_burned:
                 self._pop(st.cx(), st.y - 14, "Already burned! Clear it.", C["burn"])
                 return
-            # auto-start cooking on first stir
             if not st.pot_cooking and not st.pot_cooked:
                 st.pot_on = True
                 st.pot_cooking = True
                 st.pot_stirs = 0
                 st.pot_prog = 0.0
             st.pot_stirs += 1
-            # over-stir burn: stirs >= STIR_ACTIONS + 3
             if st.pot_stirs >= STIR_ACTIONS + 3:
                 st.pot_cooking = False
                 st.pot_cooked = True
@@ -337,21 +312,15 @@ class Game:
             return
 
         contents = dish.get("contents", [])
-        h_ids = sorted(
-            c.get("id")
-            for c in contents
-            if isinstance(c, dict) and c.get("id")
-        )
+        h_ids = sorted(c.get("id") for c in contents if isinstance(c, dict) and c.get("id"))
         if len(h_ids) != len(contents):
             self._pop(st.cx(), st.y - 14, "Invalid dish: missing ingredient id", C["red"])
             self._clear_submit_source(from_holding)
-            log.warning("SUBMIT_FAIL: missing ingredient id in dish")
             return
 
         matched = None
         for o in self.orders:
-            if o.status != "active":
-                continue
+            if o.status != "active": continue
             if sorted(o.recipe["needs"]) == h_ids and o.recipe.get("cook", True) == dish.get("cooked", False):
                 matched = o
                 break
@@ -363,7 +332,6 @@ class Game:
                 matched.status = "done"
                 self._clear_submit_source(from_holding)
                 self._pop(st.cx(), st.y - 30, f"-{penalty} pts! BURNED!", C["burn"])
-                log.warning(f"SUBMIT_BURNED: recipe={matched.recipe['name']} penalty={penalty} score={self.score}")
             else:
                 bonus = int(matched.t / ORDER_TIME * 50)
                 pts = matched.recipe["pts"] + bonus
@@ -371,23 +339,17 @@ class Game:
                 matched.status = "done"
                 self._clear_submit_source(from_holding)
                 self._pop(st.cx(), st.y - 30, f"+{pts} pts! 🎉", C["green"])
-                log.info(
-                    f"SUBMIT_OK: recipe={matched.recipe['name']} pts={pts} "
-                    f"(base={matched.recipe['pts']} bonus={bonus}) score={self.score}"
-                )
         else:
             penalty = 30
             self.score = max(0, self.score - penalty)
             self._pop(st.cx(), st.y - 14, f"No order! -{penalty} pts", C["red"])
             self._clear_submit_source(from_holding)
-            log.warning(f"SUBMIT_FAIL: no matching order for {h_ids}, penalty={penalty} score={self.score}")
 
     def _act_trash(self, st):
         h = self.player.holding
         if h:
             self.player.holding = None
             self._pop(st.cx(), st.y - 14, "Trashed!", C["pink"])
-            log.info(f"TRASH: {h.get('id', '<missing-id>')}")
             return
 
         chops = [s for s in self.stations if s.kind == "chop" and s.chop_item]
@@ -398,7 +360,6 @@ class Game:
                 chop.chop_hits = 0
                 chop.chopping = False
             self._pop(st.cx(), st.y - 14, "Chop boards cleared", C["pink"])
-            log.info(f"TRASH_CHOP: cleared {len(chops)} board(s)")
         else:
             self._pop(st.cx(), st.y - 14, "Nothing to trash", C["white"])
 
@@ -406,11 +367,8 @@ class Game:
         if self.overlay.active:
             self.overlay.active = False
             return
-
         st = self._near()
-        if not st:
-            return
-
+        if not st: return
         handlers = {
             "ing": self._act_ing,
             "chop": self._act_chop,
@@ -419,15 +377,13 @@ class Game:
             "trash": self._act_trash,
         }
         handler = handlers.get(st.kind)
-        if handler:
-            handler(st)
+        if handler: handler(st)
 
     def _pick_ingredient(self, ing_key):
         ing = INGS[ing_key]
         self.player.holding = {"id": ing_key, "label": ing["label"], "chopped": False}
         self._pop(self.player.x, self.player.y - 20, f"Picked {ing['label']}", C["lime"])
         self.overlay.active = False
-        log.info(f"PICK_ING: {ing_key}")
 
     def _pop(self, x, y, msg, col):
         self.popups.append(Popup(x, y, msg, col))
@@ -436,12 +392,9 @@ class Game:
         active = sum(1 for o in self.orders if o.status == "active")
         if active >= 3: return
         self.orders.append(Order(random.choice(RECIPES)))
-        log.info(f"ORDER_SPAWN: {self.orders[-1].recipe['name']}")
 
-    # ── hint ─────────────────────────────────
     def _hint(self):
-        if self.overlay.active:
-            return "Click an ingredient card  |  ESC to cancel"
+        if self.overlay.active: return "Click an ingredient card  |  ESC to cancel"
         st = self._near()
         if not st: return ""
         h = self.player.holding
@@ -469,8 +422,7 @@ class Game:
             if not h and st.pot_cooking: return f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {STIR_ACTIONS + 3})"
         if k == "submit":
             if h and h.get("cooked"):
-                if h.get("burned"):
-                    return "Action: Submit burned dish (penalty!)"
+                if h.get("burned"): return "Action: Submit burned dish (penalty!)"
                 return "Action: Submit dish!"
             dish, _ = self._find_submit_dish()
             return "Action: Submit dish!" if dish else "Action: Nothing to submit"
@@ -479,7 +431,6 @@ class Game:
             return "Action: Clear chop boards"
         return ""
 
-    # ── update ───────────────────────────────
     def update(self, dt, gi: "GameInput", mpos, mpressed):
         gw, gh = screen.get_size()
         if gw != self.gw or gh != self.gh:
@@ -494,35 +445,24 @@ class Game:
             return
 
         if self.state == "paused":
-            if self.btn_pause_continue.update(mpos, mpressed):
-                self.state = "play"
+            if self.btn_pause_continue.update(mpos, mpressed): self.state = "play"
             if self.btn_pause_restart.update(mpos, mpressed):
                 self.reset(); self.state = "play"
                 self._spawn_order(); self._spawn_order()
             return
 
         if self.overlay.active:
-            if gi.move_to_slot is not None:
-                idx = gi.move_to_slot - 1
-                if 0 <= idx < len(ING_KEYS):
-                    self._pick_ingredient(ING_KEYS[idx])
-                    return
             if gi.overlay_click:
                 key = self.overlay.check_click(gi.overlay_click)
-                if key:
-                    self._pick_ingredient(key)
-                else:
-                    self.overlay.active = False
+                if key: self._pick_ingredient(key)
+                else: self.overlay.active = False
             return
 
-        if self.recipe_overlay.active:
-            return
+        if self.recipe_overlay.active: return
 
-        # ── on-screen gesture buttons ──
         move_to_slot = gi.move_to_slot
         for i, (slot, _, _c) in enumerate(self._SLOT_BTN_INFO):
-            if self.btn_slots[i].update(mpos, mpressed):
-                move_to_slot = slot
+            if self.btn_slots[i].update(mpos, mpressed): move_to_slot = slot
 
         act_flags = {
             "confirm":  gi.confirm  or gi.action,
@@ -531,16 +471,13 @@ class Game:
             "pause":    False,
         }
         for i, (key, _, _c) in enumerate(self._ACT_BTN_INFO):
-            if self.btn_acts[i].update(mpos, mpressed):
-                act_flags[key] = True
+            if self.btn_acts[i].update(mpos, mpressed): act_flags[key] = True
 
         if act_flags["pause"]:
             self.state = "paused"
             return
 
         move_dir = gi.move_dir
-
-        # ── gesture: teleport to station slot ──
         if move_to_slot is not None:
             target = self._station_for_slot(move_to_slot)
             if target:
@@ -550,49 +487,32 @@ class Game:
 
         self.player.update(move_dir, dt, gw, self._gy())
 
-        # ── action dispatch ──
         handled = False
         if act_flags["chop"]:
             st = self._near()
             if st and st.kind == "chop":
-                try:
-                    self._act_chop(st, chop_action=True)
-                except Exception:
-                    log.exception("_act_chop crashed")
+                self._act_chop(st, chop_action=True)
                 handled = True
         if act_flags["stir"] and not handled:
             st = self._near()
             if st and st.kind == "pot":
-                try:
-                    self._act_pot(st, stir_only=True)
-                except Exception:
-                    log.exception("_act_pot crashed")
+                self._act_pot(st, stir_only=True)
                 handled = True
         if act_flags["confirm"] and not handled:
-            try:
-                self.do_action()
-            except Exception:
-                log.exception("do_action crashed")
+            self.do_action()
 
         for s in self.stations:
             events = s.update(dt)
             for ev in events:
-                if ev == "chop_done":
-                    self._pop(s.cx(), s.y - 14, "✓ Chopped!", C["lime"])
-                    log.info(f"CHOP_DONE: {s.chop_item and s.chop_item.get('id')}")
-                elif ev == "cook_done":
-                    self._pop(s.cx(), s.y - 14, "✓ Cooked! Pick it up!", C["green"])
-                    log.info("COOK_DONE")
-                elif ev == "burned":
-                    self._pop(s.cx(), s.y - 14, "🔥 BURNED!", C["burn"])
-                    log.warning("POT_BURNED")
+                if ev == "chop_done": self._pop(s.cx(), s.y - 14, "✓ Chopped!", C["lime"])
+                elif ev == "cook_done": self._pop(s.cx(), s.y - 14, "✓ Cooked! Pick it up!", C["green"])
+                elif ev == "burned": self._pop(s.cx(), s.y - 14, "🔥 BURNED!", C["burn"])
 
         for o in self.orders:
             ev = o.update(dt)
             if ev == "failed":
                 self.score = max(0, self.score - 30)
                 self._pop(gw // 2, gh // 2 - 80, "Order failed! -30", C["red"])
-                log.warning(f"ORDER_FAIL: recipe={o.recipe['name']} score={self.score}")
 
         self.elapsed += dt
         if self.elapsed >= self.next_order:
@@ -602,12 +522,10 @@ class Game:
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
             self.state = "over"
-            log.info(f"GAME_OVER: final_score={self.score}")
 
         for p in self.popups: p.update()
         self.popups = [p for p in self.popups if not p.dead]
 
-    # ── draw ─────────────────────────────────
     def draw(self):
         gw, gh = screen.get_size()
         gy = self._gy()
@@ -626,8 +544,7 @@ class Game:
         pygame.draw.line(screen, (*C["ground_line"], 100), (0, gy), (gw, gy), 2)
         screen.fill((8, 8, 26), (0, gy + 7, gw, gh - gy - 7))
 
-        for s in self.stations:
-            s.draw(screen, gy)
+        for s in self.stations: s.draw(screen, gy)
 
         ns = self._near()
         if ns and not self.overlay.active:
@@ -635,7 +552,6 @@ class Game:
                              (ns.x - 2, ns.y - 2, ns.w + 4, ns.h + 4), 2, border_radius=8)
 
         self.player.draw(screen)
-
         for p in self.popups: p.draw(screen)
 
         self.overlay.draw(screen)
@@ -646,10 +562,8 @@ class Game:
             self._draw_recipes_panel()
 
         if self.state == "play":
-            for btn in self.btn_slots:
-                btn.draw(screen)
-            for btn in self.btn_acts:
-                btn.draw(screen)
+            for btn in self.btn_slots: btn.draw(screen)
+            for btn in self.btn_acts: btn.draw(screen)
 
     def _draw_recipes_panel(self):
         rx, ry, rw, rh = self._recipe_panel_rect()
@@ -692,8 +606,7 @@ class Game:
             cx_ = rx + 6 + col * (card_w + 6)
             cy_ = area_y + 2 + row * (card_h + 4)
 
-            if cy_ + card_h > ry + rh - 2:
-                break
+            if cy_ + card_h > ry + rh - 2: break
 
             rr(screen, (24, 30, 62), (cx_, cy_, card_w, card_h), 6)
             pygame.draw.rect(screen, (55, 48, 115), (cx_, cy_, card_w, card_h), 1, border_radius=6)
@@ -710,14 +623,20 @@ class Game:
 
             dot_x = cx_ + 4
             for j, need in enumerate(rec["needs"]):
-                base = need.replace("_c", "")
-                ing  = INGS.get(base, {})
-                col_dot = ing.get("color", (150, 150, 150))
                 r_dot = 5
                 dy = inner_y + r_dot
                 if dot_x + r_dot * 2 + 2 > cx_ + card_w - 4:
                     break
-                pygame.draw.circle(screen, col_dot, (dot_x + r_dot, dy), r_dot)
+                
+                img = get_img(need, 10, 10)
+                if img:
+                    screen.blit(img, (dot_x, dy - 5))
+                else:
+                    base = need.replace("_c", "")
+                    ing  = INGS.get(base, {})
+                    col_dot = ing.get("color", (150, 150, 150))
+                    pygame.draw.circle(screen, col_dot, (dot_x + r_dot, dy), r_dot)
+                
                 dot_x += r_dot * 2 + 6
             inner_y += 14
 
@@ -805,21 +724,13 @@ class Game:
         self.btn_pause_restart.draw(screen)
 
 
-# ─────────────────────────────────────────────
-#  메인 루프
-# ─────────────────────────────────────────────
 def main():
     game = Game()
-
-    # keyboard state
     held      = {"left": False, "right": False}
-    # frame-level gesture flags (reset each frame)
     _gi_frame: dict = {}
-
     mpressed     = False
     overlay_click = None
 
-    # keyboard → slot mapping (1-5 keys)
     _SLOT_KEYS = {
         pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3,
         pygame.K_4: 4, pygame.K_5: 5,
@@ -827,34 +738,25 @@ def main():
 
     while True:
         dt = min(clock.tick(FPS) / 1000.0, 0.05)
-
-        _gi_frame = {}   # reset per-frame gesture flags
+        _gi_frame = {}
         overlay_click = None
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
             if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_LEFT, pygame.K_a):
-                    held["left"] = True
-                if event.key in (pygame.K_RIGHT, pygame.K_d):
-                    held["right"] = True
-                # ── slot teleport (finger_1~5) ──
+                if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = True
+                if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = True
                 if event.key in _SLOT_KEYS and game.state == "play":
                     _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
-                # ── gesture action shortcuts ──
                 if event.key in (pygame.K_z, pygame.K_SPACE):
-                    if game.state == "play":
-                        _gi_frame["confirm"] = True
+                    if game.state == "play": _gi_frame["confirm"] = True
                     elif game.state in ("title", "over"):
                         game.reset(); game.state = "play"
                         game._spawn_order(); game._spawn_order()
-                if event.key == pygame.K_c and game.state == "play":
-                    _gi_frame["chop"] = True          # chop_motion
-                if event.key == pygame.K_v and game.state == "play":
-                    _gi_frame["stir"] = True           # stir_motion
-                if event.key == pygame.K_g and game.state == "play":
-                    _gi_frame["put_down"] = True       # palms_down
+                if event.key == pygame.K_c and game.state == "play": _gi_frame["chop"] = True
+                if event.key == pygame.K_v and game.state == "play": _gi_frame["stir"] = True
+                if event.key == pygame.K_g and game.state == "play": _gi_frame["put_down"] = True
                 if event.key == pygame.K_r:
                     if game.state == "play":
                         game.recipe_overlay.active = not game.recipe_overlay.active
@@ -864,23 +766,17 @@ def main():
                         game.reset(); game.state = "play"
                         game._spawn_order(); game._spawn_order()
                 if event.key == pygame.K_ESCAPE:
-                    if game.recipe_overlay.active:
-                        game.recipe_overlay.active = False
-                    elif game.overlay.active:
-                        game.overlay.active = False
-                    elif game.state == "play":
-                        game.state = "paused"
-                    elif game.state == "paused":
-                        game.state = "play"
-                    else:
-                        pygame.quit(); sys.exit()
+                    if game.recipe_overlay.active: game.recipe_overlay.active = False
+                    elif game.overlay.active: game.overlay.active = False
+                    elif game.state == "play": game.state = "paused"
+                    elif game.state == "paused": game.state = "play"
+                    else: pygame.quit(); sys.exit()
             if event.type == pygame.KEYUP:
-                if event.key in (pygame.K_LEFT, pygame.K_a):  held["left"]  = False
+                if event.key in (pygame.K_LEFT, pygame.K_a): held["left"]  = False
                 if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mpressed = True
-                if game.overlay.active:
-                    overlay_click = pygame.mouse.get_pos()
+                if game.overlay.active: overlay_click = pygame.mouse.get_pos()
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
 
@@ -900,17 +796,12 @@ def main():
         )
         game.update(dt, gi, mpos, mpressed)
 
-        if game.state == "title":
-            game.draw_title()
-        elif game.state == "over":
-            game.draw_over()
-        elif game.state == "paused":
-            game.draw_paused()
-        else:
-            game.draw()
+        if game.state == "title": game.draw_title()
+        elif game.state == "over": game.draw_over()
+        elif game.state == "paused": game.draw_paused()
+        else: game.draw()
 
         pygame.display.flip()
-
 
 if __name__ == "__main__":
     main()
