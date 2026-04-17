@@ -10,6 +10,7 @@
 
 import dataclasses
 import argparse
+import os
 import pygame
 import sys
 import random
@@ -125,6 +126,10 @@ class Game:
         self._camera = None
         self._camera_error = None
         self._act_btn_info = self._build_act_btn_info()
+        self._title_bg_img = None
+        self._start_btn_img = None
+        self._load_title_bg()
+        self._load_start_btn()
 
         if self.use_gesture:
             self._init_pipeline(flip)
@@ -136,6 +141,28 @@ class Game:
         self.recipe_overlay = RecipeOverlay()
         self._make_btns()
         self.reset()
+
+    def _load_title_bg(self):
+        """Load and cache the title screen background image."""
+        try:
+            if not os.path.exists("assets/Game_Screen.png"):
+                return
+            self._title_bg_img = pygame.image.load("assets/Game_Screen.png")
+            log.info("Title background image loaded: assets/Game_Screen.png")
+        except Exception as e:
+            log.error("Failed to load title background: %s", e)
+            self._title_bg_img = None
+
+    def _load_start_btn(self):
+        """Load and cache the start button image."""
+        try:
+            if not os.path.exists("assets/start_btn.png"):
+                return
+            self._start_btn_img = pygame.image.load("assets/start_btn.png")
+            # self._start_btn_img = None
+        except Exception as e:
+            log.error("Failed to load start button: %s", e)
+            self._start_btn_img = None
 
     def _build_act_btn_info(self):
         return [
@@ -350,7 +377,7 @@ class Game:
             self._cam_slot_rect = None
 
         self.btn_action = self.btn_acts_map["confirm"]
-        self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 70, 110, 52, "Start", (50, 50, 130))
+        self.btn_start  = Btn(gw // 2 - 200, gh // 2 + 80, 400, 110, "Start", (184, 101, 30))
         self.btn_pause_continue = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "▶ Continue", (40, 120, 60))
         self.btn_pause_restart  = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "↺ Restart",  (120, 50, 50))
 
@@ -477,7 +504,7 @@ class Game:
                 self._lock_mode = "stir"
                 self._lock_station = st
             st.pot_stirs += 1
-            if st.pot_stirs >= STIR_ACTIONS + 3:
+            if st.pot_stirs >= STIR_ACTIONS + 5:
                 st.pot_cooking = False
                 st.pot_cooked = True
                 st.pot_burned = True
@@ -984,23 +1011,22 @@ class Game:
 
     def draw_title(self):
         gw, gh = screen.get_size()
-        screen.fill(C["bg"])
-        txt(screen, "🍳 Cooking Game", 40, C["gold"], gw // 2, gh // 2 - 110)
-        lines = [
-            "Tap/click a station to move there  |  Action = interact",
-            "Keyboard: arrow keys + Z/Space also work",
-            "",
-            "Pantry → pick ingredient   |   Chop board → OK to place, Chop! to chop",
-            "Stove → add ingredients → Stir to cook (burn if over-stirred!)",
-            "Stove done → pick up dish → go to Submit → submit for points",
-            "Trash → drop unwanted items or clear chop board",
-            "",
-            "⚠  Leave pot too long after cooking → BURNED!",
-            "Press R or Recipe button to view recipes anytime",
-        ]
-        for i, line in enumerate(lines):
-            txt(screen, line, 14, (170, 170, 210), gw // 2, gh // 2 - 50 + i * 22)
-        self.btn_start.draw(screen)
+        
+        # Draw background image if available, otherwise fill with color
+        if self._title_bg_img:
+            bg_scaled = pygame.transform.smoothscale(self._title_bg_img, (gw, gh))
+            screen.blit(bg_scaled, (0, 0))
+        else:
+            screen.fill(C["bg"])
+        
+        # Draw start button image if available
+        if self._start_btn_img:
+            btn_rect = self.btn_start.rect
+            btn_scaled = pygame.transform.smoothscale(self._start_btn_img, (btn_rect.width, btn_rect.height))
+            screen.blit(btn_scaled, btn_rect.topleft)
+        else:
+            # Fallback to regular button drawing
+            self.btn_start.draw(screen)
 
     def draw_over(self):
         self.draw()
