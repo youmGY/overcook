@@ -75,10 +75,10 @@ def hand_inputs_to_game_input(hands, overlay_active: bool = False) -> GameInput:
         if h.stale:
             continue
 
-        # --- motion-based actions (any frame, not only confirmed) ---
-        if h.motion == "chop_motion":
+        # --- motion-based actions (only on actual completed strokes) ---
+        if h.motion == "chop_motion" and h.motion_count > 0:
             gi.chop = True
-        elif h.motion == "stir_motion":
+        elif h.motion == "stir_motion" and h.motion_count > 0:
             gi.stir = True
 
         # --- gesture-confirmed actions (debounced, fires once) ---
