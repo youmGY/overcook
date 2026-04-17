@@ -25,7 +25,7 @@ from engine import screen, clock, FPS, F, get_img
 from constants import C, INGS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
 from utils import rr, txt, bar
 from ui import Popup, Btn, RecipeOverlay, IngredientOverlay
-from entities import Station, Player, Order
+from entities import Station, Player, Order, _load_completed_food_img
 
 # ── logger ────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -257,7 +257,7 @@ class Game:
             self._cam_slot_rect = None
 
         self.btn_action = self.btn_acts_map["confirm"]
-        self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 70, 110, 52, "Start", (50, 50, 130))
+        self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 110, 110, 52, "Start", (50, 50, 130))
         self.btn_pause_continue = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "▶ Continue", (40, 120, 60))
         self.btn_pause_restart  = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "↺ Restart",  (120, 50, 50))
 
@@ -755,33 +755,52 @@ class Game:
             pygame.draw.rect(screen, (55, 48, 115), (cx_, cy_, card_w, card_h), 1, border_radius=6)
 
             inner_y = cy_ + 4
+
+            # Completed dish thumbnail next to recipe name
             name_s = F[14].render(rec["name"], True, C["white"])
-            if name_s.get_width() > card_w - 6:
+            if name_s.get_width() > card_w - 40:
                 name_s = F[12].render(rec["name"], True, C["white"])
-            screen.blit(name_s, (cx_ + 4, inner_y))
+            text_h = name_s.get_height()
+
+            dish_thumb = _load_completed_food_img(f"{rec['name']}.png", 32, 32)
+            thumb_offset = 0
+            if dish_thumb:
+                # Crop transparent padding from the thumbnail for tighter fit
+                mask = pygame.mask.from_surface(dish_thumb)
+                brect = mask.get_bounding_rects()
+                if brect:
+                    cr = brect[0]
+                    for r2 in brect[1:]:
+                        cr.union_ip(r2)
+                    dish_thumb = dish_thumb.subsurface(cr)
+                th = dish_thumb.get_height()
+                tw = dish_thumb.get_width()
+                # Vertically center thumb with text
+                thumb_y = inner_y + text_h // 2 - th // 2
+                screen.blit(dish_thumb, (cx_ + 4, thumb_y))
+                thumb_offset = tw + 4
+
+            screen.blit(name_s, (cx_ + 4 + thumb_offset, inner_y))
 
             pts_s = F[12].render(f"+{rec['pts']}", True, C["gold"])
             screen.blit(pts_s, (cx_ + card_w - pts_s.get_width() - 4, inner_y))
-            inner_y += name_s.get_height() + 2
+            inner_y += max(name_s.get_height(), 20) + 2
 
             dot_x = cx_ + 4
+            ing_size = 20
             for j, need in enumerate(rec["needs"]):
-                r_dot = 5
-                dy = inner_y + r_dot
-                if dot_x + r_dot * 2 + 2 > cx_ + card_w - 4:
+                if dot_x + ing_size + 2 > cx_ + card_w - 4:
                     break
-                
-                img = get_img(need, 10, 10)
+                base = need.replace("_c", "")
+                img = get_img(base, ing_size, ing_size)
                 if img:
-                    screen.blit(img, (dot_x, dy - 5))
+                    screen.blit(img, (dot_x, inner_y))
                 else:
-                    base = need.replace("_c", "")
                     ing  = INGS.get(base, {})
                     col_dot = ing.get("color", (150, 150, 150))
-                    pygame.draw.circle(screen, col_dot, (dot_x + r_dot, dy), r_dot)
-                
-                dot_x += r_dot * 2 + 6
-            inner_y += 14
+                    pygame.draw.circle(screen, col_dot, (dot_x + ing_size // 2, inner_y + ing_size // 2), ing_size // 2)
+                dot_x += ing_size + 6
+            inner_y += ing_size + 4
 
             for idx, step in enumerate(rec.get("steps", [])):
                 step_txt = f"{idx + 1}. {step}"
@@ -830,7 +849,7 @@ class Game:
     def draw_title(self):
         gw, gh = screen.get_size()
         screen.fill(C["bg"])
-        txt(screen, "🍳 Cooking Game", 40, C["gold"], gw // 2, gh // 2 - 110)
+        txt(screen, "🍳 Cooking Game", 40, C["gold"], gw // 2, gh // 2 - 160)
         lines = [
             "Tap/click a station to move there  |  Action = interact",
             "Keyboard: arrow keys + Z/Space also work",
@@ -844,7 +863,7 @@ class Game:
             "Press R or Recipe button to view recipes anytime",
         ]
         for i, line in enumerate(lines):
-            txt(screen, line, 14, (170, 170, 210), gw // 2, gh // 2 - 50 + i * 22)
+            txt(screen, line, 14, (170, 170, 210), gw // 2, gh // 2 - 100 + i * 22)
         self.btn_start.draw(screen)
 
     def draw_over(self):
