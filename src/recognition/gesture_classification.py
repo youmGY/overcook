@@ -1,5 +1,5 @@
 """
-Hand Gesture Real-time Recognition (ONNX)
+Hand Gesture Real-time Recognition (ONNX) - v2
 사용법: python gesture_realtime.py
 
 필요 패키지:
@@ -16,10 +16,10 @@ from mediapipe.tasks.python import vision
 # ============================================================
 # 설정
 # ============================================================
-ONNX_PATH = "gesture_mlp_merged.onnx"
-MODEL_PATH = "hand_landmarker.task"  # MediaPipe 모델 파일 경로
+ONNX_PATH = "gesture_mlp.onnx"
+MODEL_PATH = "hand_landmarker.task"
 
-LABEL_NAMES = ['finger_1', 'finger_2', 'finger_3', 'finger_4', 'finger_5', 'thumbs_up']
+LABEL_NAMES = ['finger_1', 'finger_2', 'finger_3', 'finger_4', 'finger_5', 'thumbs_up', 'fist']
 
 # 굽힘 각도 15개
 BENDING_JOINTS = [
@@ -71,11 +71,9 @@ def extract_features(landmarks):
 # ============================================================
 class GestureClassifier:
     def __init__(self, onnx_path, model_path):
-        # ONNX 런타임
         self.session = ort.InferenceSession(onnx_path)
         self.input_name = self.session.get_inputs()[0].name
 
-        # MediaPipe Hand Landmarker
         base_options = python.BaseOptions(model_asset_path=model_path)
         options = vision.HandLandmarkerOptions(
             base_options=base_options,
@@ -88,24 +86,19 @@ class GestureClassifier:
         BGR 이미지(numpy array)를 입력받아 (클래스명, 확률, 랜드마크) 반환.
         손이 검출되지 않으면 (None, None, None) 반환.
         """
-        # BGR → RGB 변환 후 MediaPipe 이미지 생성
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-        # 손 검출
         result = self.detector.detect(mp_image)
         if not result.hand_landmarks:
             return None, None, None
 
-        # 랜드마크 추출
         hand = result.hand_landmarks[0]
         landmarks = np.array([[p.x, p.y, p.z] for p in hand])
 
-        # 특성 추출 → ONNX 추론
         features = extract_features(landmarks).reshape(1, -1)
         logits = self.session.run(None, {self.input_name: features})[0][0]
 
-        # softmax → 확률
         exp = np.exp(logits - logits.max())
         probs = exp / exp.sum()
         class_idx = int(np.argmax(probs))
@@ -117,9 +110,7 @@ class GestureClassifier:
 # 웹캠 실시간 분류
 # ============================================================
 def draw_landmarks(frame, landmarks):
-    """랜드마크를 프레임에 그리기."""
     h, w = frame.shape[:2]
-    # 연결선 정의
     connections = [
         (0,1),(1,2),(2,3),(3,4),
         (0,5),(5,6),(6,7),(7,8),
@@ -151,14 +142,11 @@ def run_webcam():
         if not ret:
             break
 
-        frame = cv2.flip(frame, 1)  # 좌우 반전 (거울 모드)
+        frame = cv2.flip(frame, 1)
         label, conf, landmarks = classifier.predict(frame)
 
         if label is not None:
-            # 랜드마크 그리기
             draw_landmarks(frame, landmarks)
-
-            # 결과 텍스트
             text = f"{label} ({conf:.1%})"
             cv2.putText(frame, text, (10, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)

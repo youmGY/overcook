@@ -4,19 +4,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from .camera import CameraConfig, open_camera
+# Hand landmark index for wrist
+_LM_WRIST = 0
+
+import numpy as np
+
+from .camera import CameraConfig, ThreadedCamera, open_camera
 from .gesture import (
     LABEL_THUMBS_UP,
     LABEL_UNKNOWN,
-    classify,
-    finger_states,
-    fingers_point_up,
+    GestureClassifierDNN,
+    landmarks_to_numpy,
     target_slot_for,
 )
 from .hand_split import HandSplitter
 from .hand_tracker import HandTracker, HandTrackerConfig
-from .motion import HandFlags, MotionDetector
-from .pose_tracker import PoseTracker, PoseTrackerConfig
+from .motion import MotionDebug, MotionDetector, compute_hand_flags
 
 
 @dataclass
@@ -31,11 +34,12 @@ class HandInput:
     gesture_confirmed: bool                # debounce-confirmed this frame
     motion: Optional[str]                  # chop/stir/hands_together/palms_down/thumbs_up/None
     motion_confidence: float               # 0.0~1.0
+    motion_count: int = 0                  # new chop/stir strokes this frame (0, 1, rarely 2+)
     stale: bool = False
 
 
 class RecognitionPipeline:
-    """Hands + Pose → HandInput list.
+    """Hands + DNN gesture → HandInput list.
 
     Usage:
         pipe = RecognitionPipeline()
@@ -48,19 +52,22 @@ class RecognitionPipeline:
         self,
         camera_cfg: Optional[CameraConfig] = None,
         hand_cfg: Optional[HandTrackerConfig] = None,
-        pose_cfg: Optional[PoseTrackerConfig] = None,
         flip: bool = True,
+        gesture_onnx_path: Optional[str] = None,
+        gesture_confidence: float = 0.6,
     ) -> None:
         self.camera_cfg = camera_cfg or CameraConfig()
         self.hand_cfg = hand_cfg or HandTrackerConfig()
-        self.pose_cfg = pose_cfg or PoseTrackerConfig()
         self.flip = flip
 
-        self._cap = open_camera(self.camera_cfg)
+        self._cap = ThreadedCamera(open_camera(self.camera_cfg))
         self._hands = HandTracker(self.hand_cfg)
-        self._pose = PoseTracker(self.pose_cfg)
         self._splitter = HandSplitter()
         self._motion = MotionDetector()
+        self._gesture_dnn = GestureClassifierDNN(
+            onnx_path=gesture_onnx_path,
+            confidence_threshold=gesture_confidence,
+        )
 
         self._last_frame = None
 
@@ -72,6 +79,17 @@ class RecognitionPipeline:
     def fps(self) -> float:
         return self._hands.fps
 
+    @property
+    def motion_debug(self) -> Dict[str, MotionDebug]:
+        return self._motion.debug
+
+    def _mp_handedness_label(self, hand_id: str) -> str:
+        """Map splitter's viewer-perspective hand_id to MediaPipe subject label."""
+        mp_label = "Right" if hand_id == "left" else "Left"
+        if self.flip:
+            mp_label = "Left" if mp_label == "Right" else "Right"
+        return mp_label
+
     def step(self, draw_overlay: bool = False) -> List[HandInput]:
         ok, frame = self._cap.read()
         if not ok:
@@ -82,17 +100,13 @@ class RecognitionPipeline:
             frame = cv2.flip(frame, 1)
 
         hand_results = self._hands.process(frame, draw=draw_overlay)
-        pose_joints = self._pose.process(frame)
-        if draw_overlay:
-            self._pose.draw(frame, pose_joints)
-
         hands = self._splitter.update(hand_results, flipped=self.flip)
 
-        # Per-hand gesture classification
+        # Per-hand gesture (DNN) + hand flags (rule-based for motion)
         per_hand_label: Dict[str, str] = {}
         per_hand_count: Dict[str, int] = {}
         per_hand_confirmed: Dict[str, bool] = {}
-        hand_flags: Dict[str, HandFlags] = {}
+        hand_flags: Dict[str, object] = {}
 
         for hand_id in ("left", "right"):
             state = hands[hand_id]
@@ -101,31 +115,38 @@ class RecognitionPipeline:
                 per_hand_label[hand_id] = label
                 per_hand_count[hand_id] = 0
                 per_hand_confirmed[hand_id] = False
-                hand_flags[hand_id] = HandFlags()
+                hand_flags[hand_id] = compute_hand_flags(None, "", False)
                 continue
 
-            # Translate splitter's "left"/"right" (viewer perspective) back to
-            # MediaPipe's subject-perspective label for the thumb check.
-            mp_label = "Right" if hand_id == "left" else "Left"
-            if self.flip:
-                mp_label = "Left" if mp_label == "Right" else "Right"
-            states = finger_states(state.landmarks, mp_label, flipped=self.flip)
-            up = fingers_point_up(state.landmarks)
-            raw_label, count = classify(states, up)
+            mp_label = self._mp_handedness_label(hand_id)
+
+            # DNN gesture classification
+            lm_np = landmarks_to_numpy(state.landmarks)
+            raw_label, _conf, count = self._gesture_dnn.predict(lm_np)
             label, just_confirmed = state.debouncer.update(raw_label)
 
             per_hand_label[hand_id] = label
             per_hand_count[hand_id] = count
             per_hand_confirmed[hand_id] = just_confirmed
-            hand_flags[hand_id] = HandFlags(
-                present=True,
-                all5_extended=all(states),
-                fingers_up=up,
+
+            # Rule-based flags for motion.py's palms_down detection
+            hand_flags[hand_id] = compute_hand_flags(
+                state.landmarks, mp_label, self.flip,
             )
 
+        # Extract wrist positions from hand landmarks for chop/stir detection
+        hand_wrists: Dict[str, Optional[Tuple[float, float]]] = {}
+        for hand_id in ("left", "right"):
+            state = hands[hand_id]
+            if state.landmarks is not None:
+                wlm = state.landmarks[_LM_WRIST]
+                hand_wrists[hand_id] = (wlm.x, wlm.y)
+            else:
+                hand_wrists[hand_id] = None
+
         # Motion detection (chop / stir / hands_together / palms_down)
-        motion_results = self._motion.update(pose_joints, hand_flags)
-        both_label, both_conf = motion_results.get("both", (None, 0.0))
+        motion_results = self._motion.update(hand_flags, hand_wrists)
+        both_label, both_conf, _both_cnt = motion_results.get("both", (None, 0.0, 0))
 
         outputs: List[HandInput] = []
         for hand_id in ("left", "right"):
@@ -134,22 +155,18 @@ class RecognitionPipeline:
             label = per_hand_label[hand_id]
             count = per_hand_count[hand_id]
             confirmed = per_hand_confirmed[hand_id]
-            per_motion, per_conf = motion_results.get(hand_id, (None, 0.0))
+            per_motion, per_conf, per_count = motion_results.get(hand_id, (None, 0.0, 0))
 
-            # Two-hand events override per-hand chop/stir for this frame.
             if both_label is not None:
                 per_motion = both_label
                 per_conf = max(per_conf, both_conf)
+                per_count = 0  # two-hand events have no stroke count
 
-            # Promote ``thumbs_up`` gesture (완성) to the motion field on the
-            # frame it first debounces, so Part B can treat it as an event.
-            if (
-                per_motion is None
-                and label == LABEL_THUMBS_UP
-                and confirmed
-            ):
+            # Promote thumbs_up gesture → motion field on confirmation frame
+            if per_motion is None and label == LABEL_THUMBS_UP and confirmed:
                 per_motion = LABEL_THUMBS_UP
                 per_conf = 1.0
+                per_count = 0
 
             outputs.append(
                 HandInput(
@@ -161,6 +178,7 @@ class RecognitionPipeline:
                     gesture_confirmed=confirmed,
                     motion=per_motion,
                     motion_confidence=float(per_conf),
+                    motion_count=per_count,
                     stale=state.stale,
                 )
             )
@@ -172,10 +190,7 @@ class RecognitionPipeline:
         try:
             self._hands.close()
         finally:
-            try:
-                self._pose.close()
-            finally:
-                self._cap.release()
+            self._cap.release()
 
 
 _global_pipeline: Optional[RecognitionPipeline] = None

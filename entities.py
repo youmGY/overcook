@@ -384,12 +384,23 @@ class Order:
                           C["blue"] if not fail else (130, 130, 130))
         surf.blit(nm, (x + w // 2 - nm.get_width() // 2, y + 5))
 
-        abbr = " ".join(
-            n.replace("_c", "*").replace("tomato", "Tom").replace("carrot", "Car")
-             .replace("onion", "Oni").replace("mushroom", "Msh").replace("rice", "Ric")
-            for n in self.recipe["needs"])
-        ni = F[12].render(abbr, True, (150, 150, 150))
-        surf.blit(ni, (x + w // 2 - ni.get_width() // 2, y + 20))
+        needs = self.recipe["needs"]
+        n_needs = len(needs)
+        img_sz = min(18, max(10, (w - 12) // max(n_needs, 1) - 3))
+        gap_i = 3
+        total_w = n_needs * img_sz + (n_needs - 1) * gap_i
+        start_x = x + w // 2 - total_w // 2
+        iy = y + 20
+        for idx_i, need in enumerate(needs):
+            ix = start_x + idx_i * (img_sz + gap_i)
+            base = need.replace("_c", "")
+            img = get_img(base, img_sz, img_sz)
+            if img:
+                surf.blit(img, (ix, iy))
+            else:
+                ing = INGS.get(base, {})
+                col_i = ing.get("color", (150, 150, 150))
+                pygame.draw.circle(surf, col_i, (ix + img_sz // 2, iy + img_sz // 2), img_sz // 2)
 
         pct = self.t / ORDER_TIME if self.status == "active" else 0
         col_f = C["green"] if pct > 0.4 else C["orange"] if pct > 0.15 else C["red"]

@@ -47,16 +47,16 @@ ING_KEYS = list(INGS.keys())
 RECIPES = [
     {"name": "Tomato Soup", "pts": 100, "needs": ["tomato_c","onion_c"], "cook": True,
      "steps": ["CHOP Tomato & Onion", "Add to Stove & Cook"]},
-    {"name": "Fried Rice", "pts": 110, "needs": ["tomato_c","rice"], "cook": True,
-     "steps": ["CHOP Tomato", "Get Rice",  "Add both to Stove & Cook"]},
+    {"name": "Fried Rice", "pts": 110, "needs": ["rice","tomato_c"], "cook": True,
+     "steps": ["Get Rice, CHOP Tomato", "Add both to Stove & Cook"]},
     {"name": "Mushroom Stir-fry", "pts": 90, "needs": ["mushroom_c","onion_c"], "cook": True,
      "steps": ["CHOP Mushroom & Onion", "Add to Stove & Quick Cook"]},
     {"name": "Veg Curry", "pts": 150, "needs": ["carrot_c","onion_c","rice"], "cook": True,
-     "steps": ["CHOP Carrot & Onion", "Get Rice", "Add all to Stove & Simmer"]},
+     "steps": ["CHOP Carrot & Onion","Get Rice", "Add all to Stove & Simmer"]},
     {"name": "Carrot Soup", "pts": 80, "needs": ["carrot_c"], "cook": True,
      "steps": ["CHOP Carrot", "Add to Stove & Cook"]},
     # {"name": "Rice Bowl", "pts": 95, "needs": ["rice","mushroom_c"], "cook": True,
-    #  "steps": ["Get Rice, CHOP Mushroom", "Add both to Stove & Cook"]},
+    # "steps": ["Get Rice, CHOP Mushroom", "Add both to Stove & Cook"]},
     # {"name": "Veg Salad", "pts": 70, "needs": ["tomato_c","mushroom_c"], "cook": False,
     #  "steps": ["CHOP Tomato & Mushroom", "Mix & Plate (NO COOK)"]},  //not available right now
 ]

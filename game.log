@@ -734,3 +734,144 @@
 11:24:19 [INFO] --- GAME RESET ---
 11:27:25 [INFO] --- GAME RESET ---
 11:27:26 [INFO] --- GAME RESET ---
+11:30:52 [INFO] --- GAME RESET ---
+11:30:54 [INFO] --- GAME RESET ---
+11:32:14 [INFO] --- GAME RESET ---
+11:32:15 [INFO] --- GAME RESET ---
+11:35:43 [INFO] --- GAME RESET ---
+11:35:44 [INFO] --- GAME RESET ---
+11:44:49 [INFO] --- GAME RESET ---
+11:44:50 [INFO] --- GAME RESET ---
+11:47:13 [INFO] --- GAME RESET ---
+11:47:14 [INFO] --- GAME RESET ---
+11:49:16 [INFO] --- GAME RESET ---
+11:49:16 [INFO] --- GAME RESET ---
+11:49:39 [INFO] --- GAME RESET ---
+11:49:39 [INFO] --- GAME RESET ---
+11:57:24 [INFO] --- GAME RESET ---
+11:57:27 [INFO] --- GAME RESET ---
+11:59:48 [INFO] --- GAME RESET ---
+11:59:50 [INFO] --- GAME RESET ---
+12:01:34 [INFO] --- GAME RESET ---
+12:01:35 [INFO] --- GAME RESET ---
+12:04:19 [INFO] --- GAME RESET ---
+12:04:29 [INFO] --- GAME RESET ---
+13:44:44 [INFO] --- GAME RESET ---
+13:55:53 [INFO] --- GAME RESET ---
+13:58:54 [INFO] --- GAME RESET ---
+13:58:55 [INFO] --- GAME RESET ---
+13:59:23 [INFO] --- GAME RESET ---
+13:59:23 [INFO] --- GAME RESET ---
+14:00:19 [INFO] --- GAME RESET ---
+14:00:20 [INFO] --- GAME RESET ---
+14:01:37 [INFO] --- GAME RESET ---
+14:01:48 [INFO] --- GAME RESET ---
+14:03:29 [INFO] --- GAME RESET ---
+14:03:29 [INFO] --- GAME RESET ---
+14:04:58 [INFO] --- GAME RESET ---
+14:05:00 [INFO] --- GAME RESET ---
+14:17:15 [INFO] --- GAME RESET ---
+14:17:16 [INFO] --- GAME RESET ---
+14:17:41 [INFO] --- GAME RESET ---
+14:17:43 [INFO] --- GAME RESET ---
+14:18:37 [INFO] --- GAME RESET ---
+14:18:39 [INFO] --- GAME RESET ---
+14:20:22 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+14:20:22 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+14:20:22 [DEBUG] interactive is False
+14:20:22 [DEBUG] platform is linux
+14:20:22 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+14:20:22 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+14:20:23 [INFO] Gesture recognition pipeline initialised
+14:20:23 [INFO] --- GAME RESET ---
+14:20:25 [INFO] --- GAME RESET ---
+14:21:50 [INFO] --- GAME RESET ---
+14:22:22 [INFO] --- GAME RESET ---
+14:23:18 [WARNING] POT_BURNED: over-stirred
+14:25:19 [INFO] --- GAME RESET ---
+14:27:05 [INFO] --- GAME RESET ---
+14:27:45 [WARNING] POT_BURNED: over-stirred
+14:30:58 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+14:30:58 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+14:30:58 [DEBUG] interactive is False
+14:30:58 [DEBUG] platform is linux
+14:30:58 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+14:30:58 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+14:30:58 [INFO] Gesture recognition pipeline initialised
+14:30:58 [INFO] --- GAME RESET ---
+14:31:01 [INFO] --- GAME RESET ---
+14:31:19 [INFO] --- GAME RESET ---
+14:49:40 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+14:49:40 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+14:49:40 [DEBUG] interactive is False
+14:49:40 [DEBUG] platform is linux
+14:49:40 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+14:49:40 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+14:49:41 [INFO] Gesture recognition pipeline initialised
+14:49:41 [INFO] --- GAME RESET ---
+14:49:44 [INFO] --- GAME RESET ---
+15:03:01 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+15:03:01 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:03:01 [DEBUG] interactive is False
+15:03:01 [DEBUG] platform is linux
+15:03:01 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:03:01 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:03:02 [INFO] Gesture recognition pipeline initialised
+15:03:02 [INFO] --- GAME RESET ---
+15:03:04 [INFO] --- GAME RESET ---
+15:03:12 [INFO] --- GAME RESET ---
+15:03:49 [WARNING] POT_BURNED: over-stirred
+15:08:02 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+15:08:02 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:08:02 [DEBUG] interactive is False
+15:08:02 [DEBUG] platform is linux
+15:08:02 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:08:02 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:08:03 [INFO] Gesture recognition pipeline initialised
+15:08:03 [INFO] --- GAME RESET ---
+15:08:10 [INFO] --- GAME RESET ---
+15:08:14 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+15:08:14 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:08:14 [DEBUG] interactive is False
+15:08:14 [DEBUG] platform is linux
+15:08:14 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:08:14 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:08:15 [INFO] Gesture recognition pipeline initialised
+15:08:15 [INFO] --- GAME RESET ---
+15:08:17 [INFO] --- GAME RESET ---
+15:09:19 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+15:09:19 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:09:19 [DEBUG] interactive is False
+15:09:19 [DEBUG] platform is linux
+15:09:19 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:09:19 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:09:20 [INFO] Gesture recognition pipeline initialised
+15:09:20 [INFO] --- GAME RESET ---
+15:09:22 [INFO] --- GAME RESET ---
+15:11:35 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+15:11:35 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:11:35 [DEBUG] interactive is False
+15:11:35 [DEBUG] platform is linux
+15:11:35 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:11:35 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:11:36 [INFO] Gesture recognition pipeline initialised
+15:11:36 [INFO] --- GAME RESET ---
+15:11:38 [INFO] --- GAME RESET ---
+15:16:02 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+15:16:02 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:16:02 [DEBUG] interactive is False
+15:16:02 [DEBUG] platform is linux
+15:16:02 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:16:02 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:16:03 [INFO] Gesture recognition pipeline initialised
+15:16:03 [INFO] --- GAME RESET ---
+15:16:03 [INFO] --- GAME RESET ---
+15:21:55 [DEBUG] matplotlib data path: /home/willtek/work/env/lib/python3.11/site-packages/matplotlib/mpl-data
+15:21:55 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:21:55 [DEBUG] interactive is False
+15:21:55 [DEBUG] platform is linux
+15:21:55 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:21:55 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:21:56 [INFO] Gesture recognition pipeline initialised
+15:21:56 [INFO] --- GAME RESET ---
+15:21:57 [INFO] --- GAME RESET ---

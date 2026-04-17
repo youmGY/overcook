@@ -22,7 +22,7 @@ except Exception:
     cv2 = None
 
 from engine import screen, clock, FPS, F, get_img
-from constants import C, INGS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
+from constants import C, INGS, ING_KEYS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
 from utils import rr, txt, bar
 from ui import Popup, Btn, RecipeOverlay, IngredientOverlay
 from entities import Station, Player, Order, _load_completed_food_img
@@ -58,17 +58,77 @@ class GameInput:
     move_dir:      int  = 0
     action:        bool = False
     overlay_click: Optional[tuple] = None
+    # gesture-sourced overlay commands
+    overlay_select: Optional[int] = None   # 1-based ingredient index from finger gesture
+    overlay_confirm: bool = False           # thumbs_up in overlay
+
+
+def hand_inputs_to_game_input(hands, overlay_active: bool = False) -> GameInput:
+    """Convert List[HandInput] → GameInput following the gesture-action table.
+
+    When the ingredient overlay is active, finger_N highlights an ingredient
+    and thumbs_up confirms the selection.  Otherwise finger_N maps to
+    move_to_slot and thumbs_up maps to confirm (station-specific action).
+    """
+    gi = GameInput()
+    for h in hands:
+        if h.stale:
+            continue
+
+        # --- motion-based actions (only on actual completed strokes) ---
+        if h.motion == "chop_motion" and h.motion_count > 0:
+            gi.chop = True
+        elif h.motion == "stir_motion" and h.motion_count > 0:
+            gi.stir = True
+
+        # --- gesture-confirmed actions (debounced, fires once) ---
+        if not h.gesture_confirmed:
+            continue
+
+        if h.target_slot is not None:          # finger_1 ~ finger_5
+            if overlay_active:
+                gi.overlay_select = h.target_slot   # 1-based
+            else:
+                gi.move_to_slot = h.target_slot
+
+        if h.motion == "thumbs_up" or h.gesture == "thumbs_up":
+            if overlay_active:
+                gi.overlay_confirm = True
+            else:
+                gi.confirm = True
+    return gi
+
+
+def merge_inputs(keyboard_gi: GameInput, gesture_gi: GameInput) -> GameInput:
+    """OR-merge two GameInput instances (keyboard takes priority for move_to_slot)."""
+    return GameInput(
+        move_to_slot=keyboard_gi.move_to_slot or gesture_gi.move_to_slot,
+        station_click=keyboard_gi.station_click,
+        chop=keyboard_gi.chop or gesture_gi.chop,
+        stir=keyboard_gi.stir or gesture_gi.stir,
+        put_down=keyboard_gi.put_down or gesture_gi.put_down,
+        confirm=keyboard_gi.confirm or gesture_gi.confirm,
+        move_dir=keyboard_gi.move_dir or gesture_gi.move_dir,
+        action=keyboard_gi.action or gesture_gi.action,
+        overlay_click=keyboard_gi.overlay_click,
+        overlay_select=gesture_gi.overlay_select,
+        overlay_confirm=gesture_gi.overlay_confirm,
+    )
 
 
 class Game:
-    def __init__(self, ui_mode: str = "active"):
+    def __init__(self, ui_mode: str = "active", use_gesture: bool = False, flip: bool = True):
         self.ui_mode = ui_mode
         self.use_camera_ui = ui_mode != "test"
+        self.use_gesture = use_gesture
+        self._pipeline = None
         self._camera = None
         self._camera_error = None
         self._act_btn_info = self._build_act_btn_info()
 
-        if self.use_camera_ui:
+        if self.use_gesture:
+            self._init_pipeline(flip)
+        elif self.use_camera_ui:
             self._init_camera()
 
         self.state = "title"
@@ -95,7 +155,35 @@ class Game:
             return
         self._camera = cam
 
+    def _init_pipeline(self, flip: bool):
+        """Initialise the gesture recognition pipeline (lazy import)."""
+        try:
+            from src.recognition.camera import CameraConfig
+            from src.recognition.hand_tracker import HandTrackerConfig
+            from src.recognition.interface import RecognitionPipeline
+            self._pipeline = RecognitionPipeline(
+                camera_cfg=CameraConfig(device_index=0, width=640, height=480, fps=30),
+                hand_cfg=HandTrackerConfig(),
+                flip=flip,
+            )
+            log.info("Gesture recognition pipeline initialised")
+        except Exception as e:
+            log.error("Failed to init gesture pipeline: %s", e)
+            self._camera_error = f"Pipeline init failed: {e}"
+            self._pipeline = None
+
+    def gesture_step(self):
+        """Run one recognition step and return (List[HandInput], frame_or_None)."""
+        if self._pipeline is None:
+            return [], None
+        hands = self._pipeline.step(draw_overlay=True)
+        frame = self._pipeline.last_frame
+        return hands, frame
+
     def shutdown(self):
+        if self._pipeline:
+            self._pipeline.close()
+            self._pipeline = None
         if self._camera:
             self._camera.release()
             self._camera = None
@@ -113,6 +201,8 @@ class Game:
         self.overlay.active = False
         self.overlay.rebuild()
         self.recipe_overlay.active = False
+        self._lock_mode = None
+        self._lock_station = None
 
     def _gy(self):
         _, gh = screen.get_size()
@@ -147,7 +237,7 @@ class Game:
     def _camera_rect_from_controls(self):
         return getattr(self, "_cam_slot_rect", None)
 
-    def _draw_camera_panel(self):
+    def _draw_camera_panel(self, pipeline_frame=None):
         if not self.use_camera_ui:
             return
         rect = self._camera_rect_from_controls()
@@ -157,7 +247,7 @@ class Game:
         rr(screen, (18, 20, 28), rect, 8)
         pygame.draw.rect(screen, (55, 65, 85), rect, 1, border_radius=8)
 
-        frame_surf = self._capture_camera_surface(rect.w - 8, rect.h - 8)
+        frame_surf = self._capture_camera_surface(rect.w - 8, rect.h - 8, pipeline_frame)
         inner = pygame.Rect(rect.x + 4, rect.y + 4, rect.w - 8, rect.h - 8)
         if frame_surf:
             screen.blit(frame_surf, inner.topleft)
@@ -167,16 +257,19 @@ class Game:
             s = F[12].render(msg, True, (190, 190, 210))
             screen.blit(s, (inner.centerx - s.get_width() // 2, inner.centery - s.get_height() // 2))
 
-    def _capture_camera_surface(self, w: int, h: int):
-        if not self._camera:
+    def _capture_camera_surface(self, w: int, h: int, pipeline_frame=None):
+        # Use pipeline frame if available (gesture mode shares camera)
+        if pipeline_frame is not None and cv2 is not None:
+            frame = cv2.cvtColor(pipeline_frame, cv2.COLOR_BGR2RGB)
+        elif self._camera:
+            ok, frame = self._camera.read()
+            if not ok or frame is None:
+                self._camera_error = "Camera frame read failed"
+                return None
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame = cv2.flip(frame, 1)
+        else:
             return None
-        ok, frame = self._camera.read()
-        if not ok or frame is None:
-            self._camera_error = "Camera frame read failed"
-            return None
-
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = cv2.flip(frame, 1)
 
         # Keep original camera aspect ratio and pad with black bars.
         src_h, src_w = frame.shape[:2]
@@ -257,7 +350,7 @@ class Game:
             self._cam_slot_rect = None
 
         self.btn_action = self.btn_acts_map["confirm"]
-        self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 110, 110, 52, "Start", (50, 50, 130))
+        self.btn_start  = Btn(gw // 2 - 55, gh // 2 + 70, 110, 52, "Start", (50, 50, 130))
         self.btn_pause_continue = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "▶ Continue", (40, 120, 60))
         self.btn_pause_restart  = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "↺ Restart",  (120, 50, 50))
 
@@ -314,6 +407,7 @@ class Game:
     def _act_ing(self, _st):
         if not self.player.holding:
             self.overlay.active = True
+            self.overlay.highlighted = None
         else:
             self._pop(self.player.x, self.player.y - 20, "Drop item first!", C["red"])
 
@@ -342,6 +436,8 @@ class Game:
                 st.chop_hits = 0
                 st.chopping = False
                 self._pop(st.cx(), st.y - 14, "Placed on board", C["lime"])
+            self._lock_mode = "chop"
+            self._lock_station = st
             return
 
         if st.chop_item and st.chop_item.get("chopped"):
@@ -378,6 +474,8 @@ class Game:
                 st.pot_cooking = True
                 st.pot_stirs = 0
                 st.pot_prog = 0.0
+                self._lock_mode = "stir"
+                self._lock_station = st
             st.pot_stirs += 1
             if st.pot_stirs >= STIR_ACTIONS + 3:
                 st.pot_cooking = False
@@ -530,6 +628,12 @@ class Game:
         self.orders.append(Order(random.choice(RECIPES)))
 
     def _hint(self):
+        if self._lock_mode == "chop" and self._lock_station:
+            st = self._lock_station
+            return f"Chopping! Press Chop ({st.chop_hits}/{CHOP_ACTIONS})"
+        if self._lock_mode == "stir" and self._lock_station:
+            st = self._lock_station
+            return f"Stirring! Press Stir ({st.pot_stirs}/{STIR_ACTIONS})"
         if self.overlay.active: return "Click an ingredient card  |  ESC to cancel"
         st = self._near()
         if not st: return ""
@@ -592,56 +696,88 @@ class Game:
                 key = self.overlay.check_click(gi.overlay_click)
                 if key: self._pick_ingredient(key)
                 else: self.overlay.active = False
+            # Gesture: finger_N highlights, thumbs_up confirms
+            if gi.overlay_select is not None:
+                self.overlay.highlight_by_index(gi.overlay_select - 1)  # 1-based → 0-based
+            if gi.overlay_confirm:
+                key = self.overlay.confirm_highlighted()
+                if key:
+                    self._pick_ingredient(key)
+                else:
+                    self.overlay.active = False
             return
 
         if self.recipe_overlay.active: return
 
-        move_to_slot = gi.move_to_slot
-        clicked_station = self._station_at_point(gi.station_click)
-        if clicked_station:
-            self.player.x = float(clicked_station.cx() - Player.PW // 2)
-            self.player.y = float(self._gy() - Player.PH)
-            self.player.vy = 0.0
-
-        act_flags = {
-            "confirm":  gi.confirm  or gi.action,
-            "chop":     gi.chop,
-            "stir":     gi.stir,
-            "pause":    False,
-        }
-
-        for btn in self.btn_acts:
-            key = next(k for k, v in self.btn_acts_map.items() if v is btn)
-            if btn.update(mpos, mpressed):
-                act_flags[key] = True
-
-        if act_flags["pause"]:
-            self.state = "paused"
-            return
-
-        move_dir = gi.move_dir
-        if move_to_slot is not None:
-            target = self._station_for_slot(move_to_slot)
-            if target:
-                self.player.x = float(target.cx() - Player.PW // 2)
+        if self._lock_mode:
+            # Position locked — only the relevant action is allowed
+            act_flags = {"confirm": False, "chop": gi.chop, "stir": gi.stir, "pause": False}
+            for btn in self.btn_acts:
+                key = next(k for k, v in self.btn_acts_map.items() if v is btn)
+                if btn.update(mpos, mpressed):
+                    act_flags[key] = True
+            if act_flags["pause"]:
+                self.state = "paused"
+                return
+            st = self._lock_station
+            if self._lock_mode == "chop" and act_flags["chop"] and st:
+                self._act_chop(st, chop_action=True)
+            elif self._lock_mode == "stir" and act_flags["stir"] and st:
+                self._act_pot(st, stir_only=True)
+            # Unlock when done
+            if self._lock_mode == "chop" and st and st.chop_item and st.chop_item.get("chopped"):
+                self._lock_mode = None
+                self._lock_station = None
+            elif self._lock_mode == "stir" and st and (st.pot_cooked or st.pot_burned):
+                self._lock_mode = None
+                self._lock_station = None
+        else:
+            move_to_slot = gi.move_to_slot
+            clicked_station = self._station_at_point(gi.station_click)
+            if clicked_station:
+                self.player.x = float(clicked_station.cx() - Player.PW // 2)
                 self.player.y = float(self._gy() - Player.PH)
                 self.player.vy = 0.0
 
-        self.player.update(move_dir, dt, gw, self._gy())
+            act_flags = {
+                "confirm":  gi.confirm  or gi.action,
+                "chop":     gi.chop,
+                "stir":     gi.stir,
+                "pause":    False,
+            }
 
-        handled = False
-        if act_flags["chop"]:
-            st = self._near()
-            if st and st.kind == "chop":
-                self._act_chop(st, chop_action=True)
-                handled = True
-        if act_flags["stir"] and not handled:
-            st = self._near()
-            if st and st.kind == "pot":
-                self._act_pot(st, stir_only=True)
-                handled = True
-        if act_flags["confirm"] and not handled:
-            self.do_action()
+            for btn in self.btn_acts:
+                key = next(k for k, v in self.btn_acts_map.items() if v is btn)
+                if btn.update(mpos, mpressed):
+                    act_flags[key] = True
+
+            if act_flags["pause"]:
+                self.state = "paused"
+                return
+
+            move_dir = gi.move_dir
+            if move_to_slot is not None:
+                target = self._station_for_slot(move_to_slot)
+                if target:
+                    self.player.x = float(target.cx() - Player.PW // 2)
+                    self.player.y = float(self._gy() - Player.PH)
+                    self.player.vy = 0.0
+
+            self.player.update(move_dir, dt, gw, self._gy())
+
+            handled = False
+            if act_flags["chop"]:
+                st = self._near()
+                if st and st.kind == "chop":
+                    self._act_chop(st, chop_action=True)
+                    handled = True
+            if act_flags["stir"] and not handled:
+                st = self._near()
+                if st and st.kind == "pot":
+                    self._act_pot(st, stir_only=True)
+                    handled = True
+            if act_flags["confirm"] and not handled:
+                self.do_action()
 
         for s in self.stations:
             events = s.update(dt)
@@ -668,7 +804,7 @@ class Game:
         for p in self.popups: p.update()
         self.popups = [p for p in self.popups if not p.dead]
 
-    def draw(self):
+    def draw(self, pipeline_frame=None):
         gw, gh = screen.get_size()
         gy = self._gy()
 
@@ -706,7 +842,7 @@ class Game:
         if self.state == "play":
             for btn in self.btn_acts:
                 btn.draw(screen)
-            self._draw_camera_panel()
+            self._draw_camera_panel(pipeline_frame)
 
     def _draw_recipes_panel(self):
         rx, ry, rw, rh = self._recipe_panel_rect()
@@ -832,7 +968,7 @@ class Game:
         screen.blit(tm, (gw // 2 - tm.get_width() // 2, HH // 2 - tm.get_height() // 2))
 
         ox = gw - 8
-        for o in reversed([o for o in self.orders if o.status != "done"]):
+        for o in reversed([o for o in self.orders if o.status == "active"]):
             ox -= 84
             o.draw(screen, ox, 2, w=82)
 
@@ -849,7 +985,7 @@ class Game:
     def draw_title(self):
         gw, gh = screen.get_size()
         screen.fill(C["bg"])
-        txt(screen, "🍳 Cooking Game", 40, C["gold"], gw // 2, gh // 2 - 160)
+        txt(screen, "🍳 Cooking Game", 40, C["gold"], gw // 2, gh // 2 - 110)
         lines = [
             "Tap/click a station to move there  |  Action = interact",
             "Keyboard: arrow keys + Z/Space also work",
@@ -863,7 +999,7 @@ class Game:
             "Press R or Recipe button to view recipes anytime",
         ]
         for i, line in enumerate(lines):
-            txt(screen, line, 14, (170, 170, 210), gw // 2, gh // 2 - 100 + i * 22)
+            txt(screen, line, 14, (170, 170, 210), gw // 2, gh // 2 - 50 + i * 22)
         self.btn_start.draw(screen)
 
     def draw_over(self):
@@ -890,20 +1026,25 @@ def main():
     parser = argparse.ArgumentParser(description="Overcook-style pygame game")
     parser.add_argument("-test", action="store_true", help="Use test button labels")
     parser.add_argument("-active", action="store_true", help="Show camera feed instead of action buttons")
+    parser.add_argument("--gesture", action="store_true",
+                        help="Enable gesture recognition input (camera + hand tracking)")
+    parser.add_argument("--flip", action="store_true", default=True,
+                        help="Mirror camera horizontally (default: True)")
     args = parser.parse_args()
 
     ui_mode = "normal"
     if args.test:
         ui_mode = "test"
-    if args.active:
+    if args.active or args.gesture:
         ui_mode = "active"
 
-    game = Game(ui_mode=ui_mode)
+    game = Game(ui_mode=ui_mode, use_gesture=args.gesture, flip=args.flip)
     held      = {"left": False, "right": False}
     _gi_frame: dict = {}
     mpressed     = False
     station_click = None
     overlay_click = None
+    pipeline_frame = None
 
     _SLOT_KEYS = {
         pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3,
@@ -915,6 +1056,17 @@ def main():
         _gi_frame = {}
         station_click = None
         overlay_click = None
+        pipeline_frame = None
+
+        # ── gesture recognition step ──────────────────────────────────
+        gesture_gi = GameInput()
+        if game.use_gesture:
+            hand_inputs, pipeline_frame = game.gesture_step()
+            if hand_inputs:
+                gesture_gi = hand_inputs_to_game_input(
+                    hand_inputs,
+                    overlay_active=game.overlay.active,
+                )
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -965,7 +1117,7 @@ def main():
         elif held["right"]: move_dir = 1
 
         mpos = pygame.mouse.get_pos()
-        gi = GameInput(
+        keyboard_gi = GameInput(
             move_dir     = move_dir,
             move_to_slot = _gi_frame.get("move_to_slot"),
             station_click= station_click,
@@ -975,12 +1127,13 @@ def main():
             put_down     = _gi_frame.get("put_down", False),
             overlay_click= overlay_click,
         )
+        gi = merge_inputs(keyboard_gi, gesture_gi)
         game.update(dt, gi, mpos, mpressed)
 
         if game.state == "title": game.draw_title()
         elif game.state == "over": game.draw_over()
         elif game.state == "paused": game.draw_paused()
-        else: game.draw()
+        else: game.draw(pipeline_frame)
 
         pygame.display.flip()
 
