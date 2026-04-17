@@ -11,7 +11,6 @@ import cv2
 from .camera import CameraConfig
 from .hand_tracker import HandTrackerConfig
 from .interface import RecognitionPipeline
-from .pose_tracker import PoseTrackerConfig
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,7 +29,6 @@ def main() -> None:
     pipe = RecognitionPipeline(
         camera_cfg=CameraConfig(device_index=args.device, width=w, height=h, fps=30),
         hand_cfg=HandTrackerConfig(),
-        pose_cfg=PoseTrackerConfig(),
         flip=args.flip,
     )
 
@@ -42,9 +40,9 @@ def main() -> None:
         log_writer = csv.writer(log_file)
         log_writer.writerow([
             "time", "hand", "gesture", "gesture_confirmed", "motion_event",
-            "v_par", "v_perp", "ratio",
-            "chop_rev", "chop_spd", "chop_amp",
-            "stir_rev", "stir_spd", "stir_amp",
+            "chop_osc", "stir_osc",
+            "y_amp", "x_amp", "r_y_amp", "r_x_amp",
+            "wrist_speed", "still_counter", "raw", "hold_counter",
         ])
         print(f"[Stage7] Logging motion debug to: {os.path.abspath(args.log)}")
 
@@ -124,24 +122,27 @@ def main() -> None:
                     log_writer.writerow([
                         f"{elapsed:.3f}", hi.hand_id, hi.gesture,
                         hi.gesture_confirmed, hi.motion or "",
-                        f"{d.v_par:.4f}", f"{d.v_perp:.4f}",
-                        f"{d.ratio_par_over_perp:.2f}",
-                        d.rev_par, f"{d.speed_par:.4f}", f"{d.amp_par:.4f}",
-                        d.rev_perp, f"{d.speed_perp:.4f}", f"{d.amp_perp:.4f}",
+                        d.chop_osc, d.stir_osc,
+                        f"{d.y_amp:.4f}", f"{d.x_amp:.4f}",
+                        f"{d.r_y_amp:.4f}", f"{d.r_x_amp:.4f}",
+                        f"{d.wrist_speed:.4f}", d.still_counter,
+                        d.raw, d.hold_counter,
                     ])
 
-            # Motion debug overlay (v_par/v_perp ratio + window stats)
+            # Motion debug overlay (oscillation stats)
             dbg = pipe.motion_debug
             dbg_y = fh - 10
             for hand in ("right", "left"):
                 d = dbg[hand]
-                # Line 1: instantaneous speeds and ratio
-                r_txt = f"{d.ratio_par_over_perp:5.1f}" if d.ratio_par_over_perp < 999 else "  inf"
-                line1 = f"{hand[0].upper()} v_par={d.v_par:.2f} v_perp={d.v_perp:.2f} ratio={r_txt}"
-                # Line 2: window stats (chop candidate / stir candidate)
+                # Line 1: wrist speed + still counter + raw/hold
+                line1 = (
+                    f"{hand[0].upper()} spd={d.wrist_speed:.3f}"
+                    f" still={d.still_counter} raw={d.raw} hold={d.hold_counter}"
+                )
+                # Line 2: oscillation counts + amplitudes
                 line2 = (
-                    f"  CHOP rev={d.rev_par} spd={d.speed_par:.2f} amp={d.amp_par:.3f}"
-                    f" | STIR rev={d.rev_perp} spd={d.speed_perp:.2f} amp={d.amp_perp:.3f}"
+                    f"  CHOP osc={d.chop_osc} y={d.y_amp:.3f}({d.r_y_amp:.3f})"
+                    f" | STIR osc={d.stir_osc} x={d.x_amp:.3f}({d.r_x_amp:.3f})"
                 )
                 for txt in (line2, line1):
                     cv2.putText(
@@ -156,7 +157,10 @@ def main() -> None:
                 dbg_y -= 4  # gap between hands
 
             # Threshold reference line
-            thr_txt = f"[Thresholds] R_MIN=2.0  N_min={3}  V_min={0.35}  A_min={0.04}"
+            thr_txt = (
+                f"[Thresholds] osc_min={3} amp={0.05}"
+                f" axis_dom={1.5} still_spd={0.006}"
+            )
             cv2.putText(
                 frame, thr_txt, (10, dbg_y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 3, cv2.LINE_AA,

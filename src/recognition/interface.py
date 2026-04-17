@@ -4,6 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+# Hand landmark index for wrist
+_LM_WRIST = 0
+
 import numpy as np
 
 from .camera import CameraConfig, open_camera
@@ -17,7 +20,6 @@ from .gesture import (
 from .hand_split import HandSplitter
 from .hand_tracker import HandTracker, HandTrackerConfig
 from .motion import MotionDebug, MotionDetector, compute_hand_flags
-from .pose_tracker import PoseTracker, PoseTrackerConfig
 
 
 @dataclass
@@ -36,7 +38,7 @@ class HandInput:
 
 
 class RecognitionPipeline:
-    """Hands + Pose + DNN gesture → HandInput list.
+    """Hands + DNN gesture → HandInput list.
 
     Usage:
         pipe = RecognitionPipeline()
@@ -49,19 +51,16 @@ class RecognitionPipeline:
         self,
         camera_cfg: Optional[CameraConfig] = None,
         hand_cfg: Optional[HandTrackerConfig] = None,
-        pose_cfg: Optional[PoseTrackerConfig] = None,
         flip: bool = True,
         gesture_onnx_path: Optional[str] = None,
         gesture_confidence: float = 0.6,
     ) -> None:
         self.camera_cfg = camera_cfg or CameraConfig()
         self.hand_cfg = hand_cfg or HandTrackerConfig()
-        self.pose_cfg = pose_cfg or PoseTrackerConfig()
         self.flip = flip
 
         self._cap = open_camera(self.camera_cfg)
         self._hands = HandTracker(self.hand_cfg)
-        self._pose = PoseTracker(self.pose_cfg)
         self._splitter = HandSplitter()
         self._motion = MotionDetector()
         self._gesture_dnn = GestureClassifierDNN(
@@ -100,10 +99,6 @@ class RecognitionPipeline:
             frame = cv2.flip(frame, 1)
 
         hand_results = self._hands.process(frame, draw=draw_overlay)
-        pose_joints = self._pose.process(frame)
-        if draw_overlay:
-            self._pose.draw(frame, pose_joints)
-
         hands = self._splitter.update(hand_results, flipped=self.flip)
 
         # Per-hand gesture (DNN) + hand flags (rule-based for motion)
@@ -138,8 +133,18 @@ class RecognitionPipeline:
                 state.landmarks, mp_label, self.flip,
             )
 
+        # Extract wrist positions from hand landmarks for chop/stir detection
+        hand_wrists: Dict[str, Optional[Tuple[float, float]]] = {}
+        for hand_id in ("left", "right"):
+            state = hands[hand_id]
+            if state.landmarks is not None:
+                wlm = state.landmarks[_LM_WRIST]
+                hand_wrists[hand_id] = (wlm.x, wlm.y)
+            else:
+                hand_wrists[hand_id] = None
+
         # Motion detection (chop / stir / hands_together / palms_down)
-        motion_results = self._motion.update(pose_joints, hand_flags)
+        motion_results = self._motion.update(hand_flags, hand_wrists)
         both_label, both_conf = motion_results.get("both", (None, 0.0))
 
         outputs: List[HandInput] = []
@@ -181,10 +186,7 @@ class RecognitionPipeline:
         try:
             self._hands.close()
         finally:
-            try:
-                self._pose.close()
-            finally:
-                self._cap.release()
+            self._cap.release()
 
 
 _global_pipeline: Optional[RecognitionPipeline] = None

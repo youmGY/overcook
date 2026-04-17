@@ -2,12 +2,15 @@
 
 Semantic mapping (see copilot-plan.md):
 
-    chop_motion      : 썰기    (single hand, wrist oscillation parallel to
-                        elbow→shoulder normal vector)
-    stir_motion      : 조리    (single hand, wrist oscillation perpendicular to
-                        elbow→shoulder normal vector)
+    chop_motion      : 썰기    (single hand, y-axis oscillation)
+    stir_motion      : 조리    (single hand, x-axis oscillation)
     hands_together   : 집기    (both wrists close together, held N frames)
     palms_down       : 놓기    (both hands 5-extended, palm-down, held N frames)
+
+Chop / stir detection uses a sliding-window oscillation counting approach
+(ported from gshan branch): wrist x/y coordinates are buffered and direction
+reversals with sufficient amplitude are counted.  No Pose dependency is
+required for chop/stir — only hand-landmark wrist positions.
 
 완성 is the per-frame ``thumbs_up`` gesture and is handled in
 [gesture.py](gesture.py) / [interface.py](interface.py); it does not flow
@@ -19,9 +22,9 @@ import math
 from collections import deque
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Deque, Dict, Optional, Tuple
 
-from .pose_tracker import Joint
+import numpy as np
 
 # Hand landmark indices for rule-based orientation checks (palms_down).
 _WRIST = 0
@@ -84,29 +87,45 @@ MOTION_STIR = "stir_motion"
 MOTION_HANDS_TOGETHER = "hands_together"
 MOTION_PALMS_DOWN = "palms_down"
 
-_WINDOW_SECONDS = 0.6
-_MIN_REVERSALS = 3
-_MIN_AMPLITUDE = 0.04  # normalized units
-_MIN_PEAK_SPEED = 0.35  # per second, normalized units
-_COOLDOWN_S = 0.3
-
-# Ratio threshold: the dominant axis speed must be >= R_MIN times the
-# non-dominant axis speed for a frame to count toward chop or stir.
-# 2.0 means "the main movement direction is at least twice as fast as the
-# other direction".  This is intentionally moderate — a pure up-down chop
-# easily reaches 5-10×, while a sloppy but valid chop still clears 2×.
-# Going higher (e.g. 3.0) would reject diagonal-ish motions that users
-# still perceive as chopping; going lower (e.g. 1.2) would let ambiguous
-# motions through.
-_R_MIN = 1.2
-
+# Two-hand event thresholds (unchanged)
 _HANDS_TOGETHER_DIST = 0.12
 _HANDS_TOGETHER_FRAMES = 8
-
 _PALMS_DOWN_FRAMES = 6
+_COOLDOWN_S = 0.3
 
-# Small epsilon to avoid division by zero in ratio checks.
-_EPS = 1e-9
+# ---------------------------------------------------------------------------
+#  Sliding-window oscillation parameters (from gshan branch)
+# ---------------------------------------------------------------------------
+
+# Sliding window frame count (~1.5s @ 30fps)
+_BUFFER_SIZE = 45
+
+# Minimum direction reversals with sufficient amplitude for chop/stir
+_OSCILLATION_MIN = 3
+
+# Minimum amplitude per reversal (normalized coords, 5% of screen)
+_OSCILLATION_AMP = 0.05
+
+# Large-amplitude shortcut: if amp >= this, 1 reversal is enough
+_OSCILLATION_AMP_LARGE = 0.20
+
+# Chop vs stir axis dominance ratio
+_AXIS_DOMINANCE = 1.5
+
+# Recent-frames window for amplitude gate (prevents stale buffer interference)
+_RECENT_FRAMES = 25
+
+# Hold frames: maintain gesture for N frames before returning to idle
+_HOLD_FRAMES = 8
+
+# Gap filling: max frames to cache wrist position when hand is absent
+_HAND_CACHE_MAX = 4
+
+# Still detection: wrist speed below this = "still"
+_STILL_SPEED_MAX = 0.006
+
+# Still detection: consecutive still frames before buffer reset
+_STILL_RESET_FRAMES = 10
 
 
 @dataclass
@@ -122,224 +141,103 @@ class HandFlags:
 class MotionDebug:
     """Per-hand debug snapshot exposed for tuning overlays."""
 
-    # Latest instantaneous speeds (from most recent frame pair)
-    v_par: float = 0.0
-    v_perp: float = 0.0
-    ratio_par_over_perp: float = 0.0  # v_par / v_perp (inf → pure parallel)
+    # Oscillation counts
+    chop_osc: int = 0
+    stir_osc: int = 0
 
-    # Window-level stats for parallel axis (chop candidate)
-    rev_par: int = 0
-    speed_par: float = 0.0
-    amp_par: float = 0.0
+    # Full-buffer amplitudes
+    y_amp: float = 0.0
+    x_amp: float = 0.0
 
-    # Window-level stats for perpendicular axis (stir candidate)
-    rev_perp: int = 0
-    speed_perp: float = 0.0
-    amp_perp: float = 0.0
+    # Recent-frames amplitudes (used for actual gating)
+    r_y_amp: float = 0.0
+    r_x_amp: float = 0.0
 
+    # Instantaneous wrist speed
+    wrist_speed: float = 0.0
 
-# ---------------------------------------------------------------------------
-#  3-D vector helpers
-# ---------------------------------------------------------------------------
+    # Still counter
+    still_counter: int = 0
 
-def _vec3_sub(a: Tuple[float, float, float],
-              b: Tuple[float, float, float]) -> Tuple[float, float, float]:
-    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+    # Raw detection result before hold
+    raw: str = "idle"
 
-
-def _vec3_dot(a: Tuple[float, float, float],
-              b: Tuple[float, float, float]) -> float:
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-
-
-def _vec3_scale(a: Tuple[float, float, float],
-                s: float) -> Tuple[float, float, float]:
-    return (a[0] * s, a[1] * s, a[2] * s)
-
-
-def _vec3_norm(a: Tuple[float, float, float]) -> float:
-    return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
-
-
-def _unit_normal(shoulder: Joint, elbow: Joint) -> Optional[Tuple[float, float, float]]:
-    """Return unit vector from *elbow* toward *shoulder*, or None if degenerate."""
-    v = (shoulder.x - elbow.x, shoulder.y - elbow.y, shoulder.z - elbow.z)
-    length = _vec3_norm(v)
-    if length < _EPS:
-        return None
-    return (v[0] / length, v[1] / length, v[2] / length)
-
-
-def _decompose(
-    d: Tuple[float, float, float],
-    n: Tuple[float, float, float],
-) -> Tuple[float, Tuple[float, float, float]]:
-    """Decompose *d* into parallel scalar and perpendicular vector w.r.t. *n*."""
-    d_par = _vec3_dot(d, n)
-    d_perp = _vec3_sub(d, _vec3_scale(n, d_par))
-    return d_par, d_perp
+    # Hold counter
+    hold_counter: int = 0
 
 
 # ---------------------------------------------------------------------------
-#  Per-hand sample: (t, d_parallel, d_perp_x, d_perp_y, d_perp_z)
+#  Oscillation counter (ported from gshan branch)
 # ---------------------------------------------------------------------------
 
-_Sample = Tuple[float, float, float, float, float]
+def _count_oscillations(buf: np.ndarray, amp_threshold: float) -> int:
+    """Count direction reversals with sufficient amplitude in a coordinate
+    time series, after moving-average smoothing.
 
+    A reversal is counted when direction changes and the distance from the
+    previous extreme point exceeds *amp_threshold*.
+    """
+    n = len(buf)
+    if n < 10:
+        return 0
+
+    # Light smoothing to remove hand tremor noise
+    k = max(3, n // 10)
+    s = np.convolve(buf, np.ones(k) / k, mode="valid")
+
+    if len(s) < 3:
+        return 0
+
+    changes = 0
+    last_dir = 0
+    last_extreme = float(s[0])
+
+    for i in range(1, len(s)):
+        diff = float(s[i]) - float(s[i - 1])
+        if abs(diff) < 1e-5:
+            continue
+        cur_dir = 1 if diff > 0 else -1
+
+        if last_dir != 0 and cur_dir != last_dir:
+            extreme = float(s[i - 1])  # direction change point = actual extreme
+            if abs(extreme - last_extreme) >= amp_threshold:
+                changes += 1
+            # Always update reference to prevent stale extreme
+            last_extreme = extreme
+
+        last_dir = cur_dir
+
+    return changes
+
+
+# ---------------------------------------------------------------------------
+#  Per-hand motion state
+# ---------------------------------------------------------------------------
 
 @dataclass
 class _HandMotionState:
-    samples: Deque[_Sample] = field(default_factory=lambda: deque())
-    last_event_t: Dict[str, float] = field(default_factory=dict)
-    # Latest instantaneous speeds (updated each frame for debug overlay)
-    last_v_par: float = 0.0
-    last_v_perp: float = 0.0
-
-
-def _prune(samples: Deque[_Sample], now: float) -> None:
-    while samples and (now - samples[0][0]) > _WINDOW_SECONDS:
-        samples.popleft()
-
-
-# ---------------------------------------------------------------------------
-#  Reversal detection – parallel (1-D scalar)
-# ---------------------------------------------------------------------------
-
-def _parallel_reversals(
-    samples: Deque[_Sample],
-) -> Tuple[int, float, float]:
-    """Reversals, peak speed, amplitude along the parallel (d_∥) axis.
-
-    Only frames where ∥-speed dominates ⊥-speed by *_R_MIN* are counted.
-    """
-    if len(samples) < 3:
-        return 0, 0.0, 0.0
-
-    times = [s[0] for s in samples]
-    d_pars = [s[1] for s in samples]
-    d_perps = [(s[2], s[3], s[4]) for s in samples]
-
-    peak_speed = 0.0
-    reversals = 0
-    prev_sign = 0
-
-    # Track min/max of d_par across *qualified* frames for amplitude.
-    par_min: Optional[float] = None
-    par_max: Optional[float] = None
-
-    for i in range(1, len(samples)):
-        dt = times[i] - times[i - 1]
-        if dt <= 0:
-            continue
-        v_par = abs(d_pars[i] - d_pars[i - 1]) / dt
-        dv_perp = _vec3_sub(d_perps[i], d_perps[i - 1])
-        v_perp = _vec3_norm(dv_perp) / dt
-
-        # Ratio gate: only consider this frame if parallel dominates.
-        if v_par < _R_MIN * (v_perp + _EPS):
-            continue
-
-        peak_speed = max(peak_speed, v_par)
-
-        # Track amplitude from qualified frames.
-        if par_min is None:
-            par_min = par_max = d_pars[i]
-        else:
-            par_min = min(par_min, d_pars[i])
-            par_max = max(par_max, d_pars[i])
-
-        # Sign of the parallel velocity (signed, not abs).
-        v_par_signed = (d_pars[i] - d_pars[i - 1]) / dt
-        sign = 1 if v_par_signed > 0.005 else (-1 if v_par_signed < -0.005 else 0)
-        if sign != 0 and prev_sign != 0 and sign != prev_sign:
-            reversals += 1
-        if sign != 0:
-            prev_sign = sign
-
-    amplitude = (par_max - par_min) if par_min is not None else 0.0
-    return reversals, peak_speed, amplitude
-
-
-# ---------------------------------------------------------------------------
-#  Reversal detection – perpendicular (2-D vector in plane ⊥ n̂)
-# ---------------------------------------------------------------------------
-
-def _perp_reversals(
-    samples: Deque[_Sample],
-) -> Tuple[int, float, float]:
-    """Reversals, peak speed, amplitude in the perpendicular plane.
-
-    Only frames where ⊥-speed dominates ∥-speed by *_R_MIN* are counted.
-    A reversal is detected when consecutive qualified velocity vectors
-    have a negative dot product (angle > 90°).
-    """
-    if len(samples) < 3:
-        return 0, 0.0, 0.0
-
-    times = [s[0] for s in samples]
-    d_pars = [s[1] for s in samples]
-    d_perps: List[Tuple[float, float, float]] = [(s[2], s[3], s[4]) for s in samples]
-
-    peak_speed = 0.0
-    reversals = 0
-    prev_v_perp: Optional[Tuple[float, float, float]] = None
-
-    # Collect qualified d_perp points for amplitude calculation.
-    qualified_perps: List[Tuple[float, float, float]] = []
-
-    for i in range(1, len(samples)):
-        dt = times[i] - times[i - 1]
-        if dt <= 0:
-            continue
-        v_par = abs(d_pars[i] - d_pars[i - 1]) / dt
-        dv_perp = _vec3_sub(d_perps[i], d_perps[i - 1])
-        v_perp = _vec3_norm(dv_perp) / dt
-
-        # Ratio gate: only consider this frame if perpendicular dominates.
-        if v_perp < _R_MIN * (v_par + _EPS):
-            continue
-
-        peak_speed = max(peak_speed, v_perp)
-        qualified_perps.append(d_perps[i])
-
-        # Velocity vector for reversal detection (not normalized – magnitude
-        # doesn't matter, only direction).
-        v_vec = _vec3_scale(dv_perp, 1.0 / dt)
-        if prev_v_perp is not None and _vec3_dot(v_vec, prev_v_perp) < 0:
-            reversals += 1
-        prev_v_perp = v_vec
-
-    # Amplitude: max pairwise distance among qualified perpendicular points.
-    amplitude = 0.0
-    n = len(qualified_perps)
-    for i in range(n):
-        for j in range(i + 1, n):
-            d = _vec3_norm(_vec3_sub(qualified_perps[i], qualified_perps[j]))
-            if d > amplitude:
-                amplitude = d
-
-    return reversals, peak_speed, amplitude
+    wy: Deque[float] = field(default_factory=lambda: deque(maxlen=_BUFFER_SIZE))
+    wx: Deque[float] = field(default_factory=lambda: deque(maxlen=_BUFFER_SIZE))
+    last_wrist_pos: Optional[Tuple[float, float]] = None
+    wrist_absent: int = 999
+    wrist_speed: float = 0.0
+    prev_wrist: Optional[Tuple[float, float]] = None
+    still_counter: int = 0
+    hold_counter: int = 0
+    held_gesture: Optional[str] = None  # MOTION_CHOP or MOTION_STIR or None
 
 
 class MotionDetector:
     """Detect chop/stir per hand, plus hands_together and palms_down events.
 
-    Chop and stir are discriminated by decomposing wrist motion relative to
-    the elbow into components parallel and perpendicular to the
-    elbow→shoulder **normal vector**:
+    Chop and stir are detected via sliding-window oscillation counting on
+    wrist x/y coordinates from hand landmarks (no Pose dependency).
 
-    * **chop** — dominant oscillation *parallel* to the normal (along the
-      upper-arm axis).
-    * **stir** — dominant oscillation *perpendicular* to the normal.
+    * **chop** — y-axis oscillation (up-down wrist movement)
+    * **stir** — x-axis oscillation (left-right wrist movement)
 
-    A frame's velocity is only counted toward chop (or stir) when the
-    dominant-axis speed exceeds the other axis speed by a factor of
-    ``_R_MIN`` (default 2.0).
-
-    ``hand_flags`` passed to :meth:`update` lets the detector recognise
-    palms_down (both hands have all five fingers extended but are NOT
-    pointing up). This is how we disambiguate ``finger_5`` (movement
-    command) from 놓기 (both palms facing downward).
+    ``hand_flags`` lets the detector recognise palms_down (both hands have
+    all five fingers extended but are NOT pointing up).
     """
 
     def __init__(self) -> None:
@@ -359,23 +257,28 @@ class MotionDetector:
 
     def update(
         self,
-        joints: Dict[str, Joint],
         hand_flags: Dict[str, HandFlags],
+        hand_wrists: Optional[Dict[str, Optional[Tuple[float, float]]]] = None,
         now: Optional[float] = None,
     ) -> Dict[str, Tuple[Optional[str], float]]:
-        """Feed pose joints + per-hand flag snapshot. Return motion events.
+        """Feed per-hand flag snapshot + hand wrist positions.
+
+        Args:
+            hand_flags: Per-hand flags for palms_down detection.
+            hand_wrists: Per-hand wrist (x, y) from hand landmarks. Used for
+                chop/stir oscillation and hands_together distance.
+                Keys: "left", "right".
 
         Returns:
             mapping {"left": (label_or_None, confidence),
                      "right": (...),
                      "both": (two_hand_event_or_None, conf)}
-
-            The ``both`` slot carries ``hands_together`` (집기) or
-            ``palms_down`` (놓기); ``hands_together`` takes priority when
-            both would fire.
         """
         if now is None:
             now = perf_counter()
+
+        if hand_wrists is None:
+            hand_wrists = {}
 
         results: Dict[str, Tuple[Optional[str], float]] = {
             "left": (None, 0.0),
@@ -383,92 +286,121 @@ class MotionDetector:
             "both": (None, 0.0),
         }
 
+        # --- per-hand chop/stir detection via oscillation counting ---
         for hand in ("left", "right"):
-            shoulder = joints.get(f"{hand}_shoulder")
-            elbow = joints.get(f"{hand}_elbow")
-            wrist = joints.get(f"{hand}_wrist")
             st = self._state[hand]
-            if elbow is None or wrist is None or shoulder is None:
-                _prune(st.samples, now)
-                continue
+            wrist_pos = hand_wrists.get(hand)
 
-            # Compute the normal vector (elbow → shoulder).
-            n_hat = _unit_normal(shoulder, elbow)
-            if n_hat is None:
-                _prune(st.samples, now)
-                continue
+            if wrist_pos is not None:
+                wx, wy = wrist_pos
+                st.wy.append(wy)
+                st.wx.append(wx)
 
-            # Displacement: wrist relative to elbow (3-D).
-            d = (wrist.x - elbow.x, wrist.y - elbow.y, wrist.z - elbow.z)
-
-            # Decompose into parallel scalar and perpendicular vector.
-            d_par, d_perp = _decompose(d, n_hat)
-
-            st.samples.append((now, d_par, d_perp[0], d_perp[1], d_perp[2]))
-            _prune(st.samples, now)
-
-            # Compute instantaneous speeds from last two samples for debug.
-            if len(st.samples) >= 2:
-                s_prev, s_cur = st.samples[-2], st.samples[-1]
-                dt_inst = s_cur[0] - s_prev[0]
-                if dt_inst > 0:
-                    st.last_v_par = abs(s_cur[1] - s_prev[1]) / dt_inst
-                    dv_p = _vec3_sub(
-                        (s_cur[2], s_cur[3], s_cur[4]),
-                        (s_prev[2], s_prev[3], s_prev[4]),
+                # Wrist speed (max of x/y delta)
+                if st.prev_wrist is not None:
+                    st.wrist_speed = max(
+                        abs(wx - st.prev_wrist[0]),
+                        abs(wy - st.prev_wrist[1]),
                     )
-                    st.last_v_perp = _vec3_norm(dv_p) / dt_inst
+                else:
+                    st.wrist_speed = 0.0
+                st.prev_wrist = (wx, wy)
+                st.last_wrist_pos = (wx, wy)
+                st.wrist_absent = 0
+            else:
+                # Gap filling: use last known position
+                if st.last_wrist_pos and st.wrist_absent < _HAND_CACHE_MAX:
+                    st.wy.append(st.last_wrist_pos[1])
+                    st.wx.append(st.last_wrist_pos[0])
+                st.wrist_absent += 1
+                st.wrist_speed = 0.0
+                st.prev_wrist = None
 
-            # --- chop: parallel oscillation ---
-            rev_par, speed_par, amp_par = _parallel_reversals(st.samples)
+            # Still detection: reset buffers when hand stops moving
+            if wrist_pos is not None and st.wrist_speed < _STILL_SPEED_MAX:
+                st.still_counter += 1
+                if st.still_counter >= _STILL_RESET_FRAMES:
+                    st.wy.clear()
+                    st.wx.clear()
+            else:
+                st.still_counter = 0
 
-            # --- stir: perpendicular oscillation ---
-            rev_perp, speed_perp, amp_perp = _perp_reversals(st.samples)
+            # Convert to numpy once
+            wy_arr = np.array(st.wy, dtype=np.float32) if st.wy else np.empty(0, dtype=np.float32)
+            wx_arr = np.array(st.wx, dtype=np.float32) if st.wx else np.empty(0, dtype=np.float32)
 
-            # Populate debug info for this hand.
-            ratio = st.last_v_par / (st.last_v_perp + _EPS)
+            y_amp = float(wy_arr.max() - wy_arr.min()) if len(wy_arr) > 0 else 0.0
+            x_amp = float(wx_arr.max() - wx_arr.min()) if len(wx_arr) > 0 else 0.0
+            chop_osc = _count_oscillations(wy_arr, _OSCILLATION_AMP)
+            stir_osc = _count_oscillations(wx_arr, _OSCILLATION_AMP)
+
+            # Recent-frames amplitude gate
+            recent_n = min(len(wy_arr), _RECENT_FRAMES)
+            if recent_n > 0:
+                r_y_amp = float(wy_arr[-recent_n:].max() - wy_arr[-recent_n:].min())
+                r_x_amp = float(wx_arr[-recent_n:].max() - wx_arr[-recent_n:].min())
+            else:
+                r_y_amp = r_x_amp = 0.0
+
+            # Chop / stir judgment
+            is_chop = (
+                (chop_osc >= _OSCILLATION_MIN)
+                or (y_amp >= _OSCILLATION_AMP_LARGE and chop_osc >= 1)
+            ) and r_y_amp >= _OSCILLATION_AMP
+
+            is_stir = (
+                (stir_osc >= _OSCILLATION_MIN)
+                or (x_amp >= _OSCILLATION_AMP_LARGE and stir_osc >= 1)
+            ) and r_x_amp >= _OSCILLATION_AMP
+
+            raw = None
+            if is_chop and is_stir:
+                if r_y_amp > r_x_amp * _AXIS_DOMINANCE:
+                    raw = MOTION_CHOP
+                elif r_x_amp > r_y_amp * _AXIS_DOMINANCE:
+                    raw = MOTION_STIR
+            elif is_chop:
+                raw = MOTION_CHOP
+            elif is_stir:
+                raw = MOTION_STIR
+
+            # Hold mechanism: maintain gesture before dropping to idle
+            if raw is not None:
+                st.held_gesture = raw
+                st.hold_counter = _HOLD_FRAMES
+                output = raw
+            elif st.hold_counter > 0:
+                st.hold_counter -= 1
+                output = st.held_gesture
+            else:
+                output = None
+
+            # Populate debug
             self.debug[hand] = MotionDebug(
-                v_par=st.last_v_par,
-                v_perp=st.last_v_perp,
-                ratio_par_over_perp=ratio,
-                rev_par=rev_par,
-                speed_par=speed_par,
-                amp_par=amp_par,
-                rev_perp=rev_perp,
-                speed_perp=speed_perp,
-                amp_perp=amp_perp,
+                chop_osc=chop_osc,
+                stir_osc=stir_osc,
+                y_amp=y_amp,
+                x_amp=x_amp,
+                r_y_amp=r_y_amp,
+                r_x_amp=r_x_amp,
+                wrist_speed=st.wrist_speed,
+                still_counter=st.still_counter,
+                raw=raw or "idle",
+                hold_counter=st.hold_counter,
             )
 
-            if (
-                rev_par >= _MIN_REVERSALS
-                and speed_par >= _MIN_PEAK_SPEED
-                and amp_par >= _MIN_AMPLITUDE
-                and (now - st.last_event_t.get(MOTION_CHOP, 0.0)) >= _COOLDOWN_S
-            ):
-                conf = min(1.0, (speed_par / _MIN_PEAK_SPEED) * 0.5 + (rev_par / 6.0))
-                st.last_event_t[MOTION_CHOP] = now
-                results[hand] = (MOTION_CHOP, conf)
-                continue
-
-            if (
-                rev_perp >= _MIN_REVERSALS
-                and speed_perp >= _MIN_PEAK_SPEED
-                and amp_perp >= _MIN_AMPLITUDE
-                and (now - st.last_event_t.get(MOTION_STIR, 0.0)) >= _COOLDOWN_S
-            ):
-                conf = min(1.0, (speed_perp / _MIN_PEAK_SPEED) * 0.5 + (rev_perp / 6.0))
-                st.last_event_t[MOTION_STIR] = now
-                results[hand] = (MOTION_STIR, conf)
+            if output is not None:
+                conf = min(1.0, max(r_y_amp, r_x_amp) / _OSCILLATION_AMP)
+                results[hand] = (output, conf)
 
         # --- two-hand events --------------------------------------------------
-        lw = joints.get("left_wrist")
-        rw = joints.get("right_wrist")
+        lw = hand_wrists.get("left")
+        rw = hand_wrists.get("right")
         together_fired = False
         if lw is not None and rw is not None:
-            dx = lw.x - rw.x
-            dy = lw.y - rw.y
-            dz = lw.z - rw.z
-            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            dx = lw[0] - rw[0]
+            dy = lw[1] - rw[1]
+            dist = math.sqrt(dx * dx + dy * dy)
             if dist < _HANDS_TOGETHER_DIST:
                 self._together_streak += 1
             else:
@@ -484,9 +416,7 @@ class MotionDetector:
         else:
             self._together_streak = 0
 
-        # palms_down (놓기): both hands have 5 extended fingers AND are NOT
-        # pointing up. Hands_together gets priority so that tightly-grouped
-        # palms-down hands don't fire both events at once.
+        # palms_down (놓기)
         left_f = hand_flags.get("left", HandFlags())
         right_f = hand_flags.get("right", HandFlags())
         palms_down_now = (
