@@ -26,6 +26,7 @@ from constants import C, INGS, ING_KEYS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TI
 from utils import rr, txt, bar
 from ui import Popup, Btn, RecipeOverlay, IngredientOverlay
 from entities import Station, Player, Order, _load_completed_food_img
+from audio import AudioManager
 
 # ── logger ────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -131,7 +132,9 @@ class Game:
         elif self.use_camera_ui:
             self._init_camera()
 
+        self.audio = AudioManager()
         self.state = "title"
+        self._hurry_bgm_active = False
         self.overlay = IngredientOverlay()
         self.recipe_overlay = RecipeOverlay()
         self._make_btns()
@@ -432,10 +435,12 @@ class Game:
                 st.chop_hits = 1
                 st.chopping = True
                 self._pop(st.cx(), st.y - 14, f"Chop {CHOP_ACTIONS}x ({st.chop_hits}/{CHOP_ACTIONS})", C["orange"])
+                self.audio.play("chop_loop")
             else:
                 st.chop_hits = 0
                 st.chopping = False
                 self._pop(st.cx(), st.y - 14, "Placed on board", C["lime"])
+                self.audio.play("place")
             self._lock_mode = "chop"
             self._lock_station = st
             return
@@ -447,6 +452,7 @@ class Game:
             st.chop_hits = 0
             st.chopping = False
             self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
+            self.audio.play("pickup_done")
             return
 
         if chop_action and st.chop_item and not st.chop_item.get("chopped"):
@@ -454,6 +460,7 @@ class Game:
             st.chop_hits = min(CHOP_ACTIONS, st.chop_hits + 1)
             st.chop_prog = st.chop_hits / float(CHOP_ACTIONS)
             self._pop(st.cx(), st.y - 14, f"Chop {CHOP_ACTIONS}x ({st.chop_hits}/{CHOP_ACTIONS})", C["orange"])
+            self.audio.play("chop_loop")
 
     def _act_pot(self, st, stir_only=False):
         h = self.player.holding
@@ -476,6 +483,7 @@ class Game:
                 st.pot_prog = 0.0
                 self._lock_mode = "stir"
                 self._lock_station = st
+                self.audio.play("ignite_whoosh")
             st.pot_stirs += 1
             if st.pot_stirs >= STIR_ACTIONS + 3:
                 st.pot_cooking = False
@@ -484,9 +492,11 @@ class Game:
                 st.pot_burn = BURN_TIME
                 self._pop(st.cx(), st.y - 14, "🔥 Over-stirred! BURNED!", C["burn"])
                 log.warning("POT_BURNED: over-stirred")
+                self.audio.play("sizzle_burn")
                 return
             st.pot_prog = min(1.0, st.pot_stirs / float(STIR_ACTIONS))
             self._pop(st.cx(), st.y - 14, f"Stir {STIR_ACTIONS}x ({st.pot_stirs}/{STIR_ACTIONS})", C["orange"])
+            self.audio.play("sizzle_loop")
             return
 
         if h and h.get("cooked"):
@@ -499,6 +509,7 @@ class Game:
                 st.pot_items.append(dict(h))
                 self.player.holding = None
                 self._pop(st.cx(), st.y - 14, "Added ✓", C["gold"])
+                self.audio.play("splash")
         elif not h and st.pot_cooked and not burned:
             dish_name = self._dish_name_from_contents(st.pot_items)
             self.player.holding = {
@@ -517,6 +528,7 @@ class Game:
             st.pot_burn = 0.0
             st.pot_burned = False
             self._pop(self.player.x, self.player.y - 20, "Picked!", C["green"])
+            self.audio.play("plate_ding")
         elif not h and burned:
             dish_name = self._dish_name_from_contents(st.pot_items)
             self.player.holding = {
@@ -536,6 +548,7 @@ class Game:
             st.pot_burn = 0.0
             st.pot_burned = False
             self._pop(self.player.x, self.player.y - 20, "Picked burned dish!", C["burn"])
+            self.audio.play("burn_puff")
         elif not h and st.pot_cooking:
             self._pop(st.cx(), st.y - 14, f"Stir {STIR_ACTIONS}x ({st.pot_stirs}/{STIR_ACTIONS})", C["white"])
 
@@ -566,6 +579,7 @@ class Game:
                 matched.status = "done"
                 self._clear_submit_source(from_holding)
                 self._pop(st.cx(), st.y - 30, f"-{penalty} pts! BURNED!", C["burn"])
+                self.audio.play("fail_buzz")
             else:
                 bonus = int(matched.t / ORDER_TIME * 50)
                 pts = matched.recipe["pts"] + bonus
@@ -573,17 +587,20 @@ class Game:
                 matched.status = "done"
                 self._clear_submit_source(from_holding)
                 self._pop(st.cx(), st.y - 30, f"+{pts} pts! 🎉", C["green"])
+                self.audio.play("serve_chaching")
         else:
             penalty = 30
             self.score = max(0, self.score - penalty)
             self._pop(st.cx(), st.y - 14, f"No order! -{penalty} pts", C["red"])
             self._clear_submit_source(from_holding)
+            self.audio.play("wrong_buzz")
 
     def _act_trash(self, st):
         h = self.player.holding
         if h:
             self.player.holding = None
             self._pop(st.cx(), st.y - 14, "Trashed!", C["pink"])
+            self.audio.play("trash_thud")
             return
 
         chops = [s for s in self.stations if s.kind == "chop" and s.chop_item]
@@ -618,6 +635,7 @@ class Game:
         self.player.holding = {"id": ing_key, "label": ing["label"], "chopped": False}
         self._pop(self.player.x, self.player.y - 20, f"Picked {ing['label']}", C["lime"])
         self.overlay.active = False
+        self.audio.play("pickup")
 
     def _pop(self, x, y, msg, col):
         self.popups.append(Popup(x, y, msg, col))
@@ -626,6 +644,7 @@ class Game:
         active = sum(1 for o in self.orders if o.status == "active")
         if active >= 3: return
         self.orders.append(Order(random.choice(RECIPES)))
+        self.audio.play("order_bell")
 
     def _hint(self):
         if self._lock_mode == "chop" and self._lock_station:
@@ -682,13 +701,23 @@ class Game:
             if self.btn_start.update(mpos, mpressed):
                 self.reset(); self.state = "play"
                 self._spawn_order(); self._spawn_order()
+                self.audio.play("ui_click")
+                self.audio.play("start_whistle")
+                self.audio.play_bgm("play_loop")
+                self._hurry_bgm_active = False
             return
 
         if self.state == "paused":
-            if self.btn_pause_continue.update(mpos, mpressed): self.state = "play"
+            if self.btn_pause_continue.update(mpos, mpressed):
+                self.state = "play"
+                self.audio.play("ui_resume")
+                self.audio.unpause_bgm()
             if self.btn_pause_restart.update(mpos, mpressed):
                 self.reset(); self.state = "play"
                 self._spawn_order(); self._spawn_order()
+                self.audio.play("ui_click")
+                self.audio.play_bgm("play_loop")
+                self._hurry_bgm_active = False
             return
 
         if self.overlay.active:
@@ -718,6 +747,8 @@ class Game:
                     act_flags[key] = True
             if act_flags["pause"]:
                 self.state = "paused"
+                self.audio.play("ui_pause")
+                self.audio.pause_bgm()
                 return
             st = self._lock_station
             if self._lock_mode == "chop" and act_flags["chop"] and st:
@@ -753,6 +784,8 @@ class Game:
 
             if act_flags["pause"]:
                 self.state = "paused"
+                self.audio.play("ui_pause")
+                self.audio.pause_bgm()
                 return
 
             move_dir = gi.move_dir
@@ -782,15 +815,22 @@ class Game:
         for s in self.stations:
             events = s.update(dt)
             for ev in events:
-                if ev == "chop_done": self._pop(s.cx(), s.y - 14, "✓ Chopped!", C["lime"])
-                elif ev == "cook_done": self._pop(s.cx(), s.y - 14, "✓ Cooked! Pick it up!", C["green"])
-                elif ev == "burned": self._pop(s.cx(), s.y - 14, "🔥 BURNED!", C["burn"])
+                if ev == "chop_done":
+                    self._pop(s.cx(), s.y - 14, "✓ Chopped!", C["lime"])
+                    self.audio.play("chop_done")
+                elif ev == "cook_done":
+                    self._pop(s.cx(), s.y - 14, "✓ Cooked! Pick it up!", C["green"])
+                    self.audio.play("cook_done")
+                elif ev == "burned":
+                    self._pop(s.cx(), s.y - 14, "🔥 BURNED!", C["burn"])
+                    self.audio.play("burn_alarm")
 
         for o in self.orders:
             ev = o.update(dt)
             if ev == "failed":
                 self.score = max(0, self.score - 30)
                 self._pop(gw // 2, gh // 2 - 80, "Order failed! -30", C["red"])
+                self.audio.play("fail_wah")
 
         self.elapsed += dt
         if self.elapsed >= self.next_order:
@@ -800,6 +840,16 @@ class Game:
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
             self.state = "over"
+            if self.score > 0:
+                self.audio.play("fanfare_win")
+                self.audio.play_bgm("result_win", loops=0)
+            else:
+                self.audio.play("fail_wah")
+                self.audio.play_bgm("result_lose", loops=0)
+        elif self.timer < 20 and not self._hurry_bgm_active:
+            self._hurry_bgm_active = True
+            self.audio.play("tick_tock")
+            self.audio.play_bgm("play_hurry_loop")
 
         for p in self.popups: p.update()
         self.popups = [p for p in self.popups if not p.dead]
@@ -1039,6 +1089,7 @@ def main():
         ui_mode = "active"
 
     game = Game(ui_mode=ui_mode, use_gesture=args.gesture, flip=args.flip)
+    game.audio.play_bgm("intro_bgm")
     held      = {"left": False, "right": False}
     _gi_frame: dict = {}
     mpressed     = False
@@ -1082,6 +1133,9 @@ def main():
                     elif game.state in ("title", "over"):
                         game.reset(); game.state = "play"
                         game._spawn_order(); game._spawn_order()
+                        game.audio.play("start_whistle")
+                        game.audio.play_bgm("play_loop")
+                        game._hurry_bgm_active = False
                 if event.key == pygame.K_c and game.state == "play": _gi_frame["chop"] = True
                 if event.key == pygame.K_v and game.state == "play": _gi_frame["stir"] = True
                 if event.key == pygame.K_g and game.state == "play": _gi_frame["put_down"] = True
@@ -1089,15 +1143,28 @@ def main():
                     if game.state == "play":
                         game.recipe_overlay.active = not game.recipe_overlay.active
                         game.overlay.active = False
+                        game.audio.play("page_flip")
                 if event.key == pygame.K_RETURN:
                     if game.state in ("title", "over"):
                         game.reset(); game.state = "play"
                         game._spawn_order(); game._spawn_order()
+                        game.audio.play("start_whistle")
+                        game.audio.play_bgm("play_loop")
+                        game._hurry_bgm_active = False
                 if event.key == pygame.K_ESCAPE:
-                    if game.recipe_overlay.active: game.recipe_overlay.active = False
-                    elif game.overlay.active: game.overlay.active = False
-                    elif game.state == "play": game.state = "paused"
-                    elif game.state == "paused": game.state = "play"
+                    if game.recipe_overlay.active:
+                        game.recipe_overlay.active = False
+                        game.audio.play("page_flip")
+                    elif game.overlay.active:
+                        game.overlay.active = False
+                    elif game.state == "play":
+                        game.state = "paused"
+                        game.audio.play("ui_pause")
+                        game.audio.pause_bgm()
+                    elif game.state == "paused":
+                        game.state = "play"
+                        game.audio.play("ui_resume")
+                        game.audio.unpause_bgm()
                     else:
                         game.shutdown()
                         pygame.quit(); sys.exit()
