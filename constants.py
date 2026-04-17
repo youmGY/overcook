@@ -55,8 +55,8 @@ RECIPES = [
      "steps": ["CHOP Carrot & Onion, Get Rice", "Add all to Stove & Simmer"]},
     {"name": "Carrot Soup", "pts": 80, "needs": ["carrot_c"], "cook": True,
      "steps": ["CHOP Carrot", "Add to Stove & Cook"]},
-    {"name": "Rice Bowl", "pts": 95, "needs": ["rice","mushroom_c"], "cook": True,
-     "steps": ["Get Rice, CHOP Mushroom", "Add both to Stove & Cook"]},
+    # {"name": "Rice Bowl", "pts": 95, "needs": ["rice","mushroom_c"], "cook": True,
+    # "steps": ["Get Rice, CHOP Mushroom", "Add both to Stove & Cook"]},
     # {"name": "Veg Salad", "pts": 70, "needs": ["tomato_c","mushroom_c"], "cook": False,
     #  "steps": ["CHOP Tomato & Mushroom", "Mix & Plate (NO COOK)"]},  //not available right now
 ]
