@@ -20,61 +20,6 @@ from typing import Deque, Dict, Optional, Tuple
 
 from .pose_tracker import Joint
 
-# Hand landmark indices for rule-based orientation checks (palms_down).
-_WRIST = 0
-_THUMB_TIP, _THUMB_IP = 4, 3
-_INDEX_TIP, _INDEX_PIP = 8, 6
-_MIDDLE_TIP, _MIDDLE_PIP = 12, 10
-_RING_TIP, _RING_PIP = 16, 14
-_PINKY_TIP, _PINKY_PIP = 20, 18
-_FINGERS_UP_MARGIN = 0.05
-
-
-def _fingers_point_up(landmarks) -> bool:
-    """True when four non-thumb fingertips sit clearly above the wrist."""
-    if len(landmarks) < 21:
-        return False
-    wrist_y = landmarks[_WRIST].y
-    tips = [
-        landmarks[_INDEX_TIP].y,
-        landmarks[_MIDDLE_TIP].y,
-        landmarks[_RING_TIP].y,
-        landmarks[_PINKY_TIP].y,
-    ]
-    return (wrist_y - sum(tips) / 4.0) > _FINGERS_UP_MARGIN
-
-
-def _all_fingers_extended(landmarks, handedness: str, flipped: bool) -> bool:
-    """Rule-based check: are all five fingers extended?"""
-    if len(landmarks) < 21:
-        return False
-    right_like = (handedness == "Right") ^ flipped
-    if right_like:
-        thumb_ok = landmarks[_THUMB_TIP].x < landmarks[_THUMB_IP].x
-    else:
-        thumb_ok = landmarks[_THUMB_TIP].x > landmarks[_THUMB_IP].x
-    if not thumb_ok:
-        return False
-    for tip, pip in (
-        (_INDEX_TIP, _INDEX_PIP),
-        (_MIDDLE_TIP, _MIDDLE_PIP),
-        (_RING_TIP, _RING_PIP),
-        (_PINKY_TIP, _PINKY_PIP),
-    ):
-        if landmarks[tip].y >= landmarks[pip].y:
-            return False
-    return True
-
-
-def compute_hand_flags(landmarks, handedness: str, flipped: bool) -> "HandFlags":
-    """Build HandFlags from raw MediaPipe landmarks for palms_down detection."""
-    if landmarks is None:
-        return HandFlags()
-    all5 = _all_fingers_extended(landmarks, handedness, flipped)
-    up = _fingers_point_up(landmarks)
-    return HandFlags(present=True, all5_extended=all5, fingers_up=up)
-
-
 # Motion labels
 MOTION_CHOP = "chop_motion"
 MOTION_STIR = "stir_motion"

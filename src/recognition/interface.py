@@ -4,19 +4,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
-
 from .camera import CameraConfig, open_camera
 from .gesture import (
     LABEL_THUMBS_UP,
     LABEL_UNKNOWN,
-    GestureClassifierDNN,
-    landmarks_to_numpy,
+    classify,
+    finger_states,
+    fingers_point_up,
     target_slot_for,
 )
 from .hand_split import HandSplitter
 from .hand_tracker import HandTracker, HandTrackerConfig
-from .motion import MotionDetector, compute_hand_flags
+from .motion import HandFlags, MotionDetector
 from .pose_tracker import PoseTracker, PoseTrackerConfig
 
 
@@ -36,7 +35,7 @@ class HandInput:
 
 
 class RecognitionPipeline:
-    """Hands + Pose + DNN gesture → HandInput list.
+    """Hands + Pose → HandInput list.
 
     Usage:
         pipe = RecognitionPipeline()
@@ -51,8 +50,6 @@ class RecognitionPipeline:
         hand_cfg: Optional[HandTrackerConfig] = None,
         pose_cfg: Optional[PoseTrackerConfig] = None,
         flip: bool = True,
-        gesture_onnx_path: Optional[str] = None,
-        gesture_confidence: float = 0.6,
     ) -> None:
         self.camera_cfg = camera_cfg or CameraConfig()
         self.hand_cfg = hand_cfg or HandTrackerConfig()
@@ -64,10 +61,6 @@ class RecognitionPipeline:
         self._pose = PoseTracker(self.pose_cfg)
         self._splitter = HandSplitter()
         self._motion = MotionDetector()
-        self._gesture_dnn = GestureClassifierDNN(
-            onnx_path=gesture_onnx_path,
-            confidence_threshold=gesture_confidence,
-        )
 
         self._last_frame = None
 
@@ -78,13 +71,6 @@ class RecognitionPipeline:
     @property
     def fps(self) -> float:
         return self._hands.fps
-
-    def _mp_handedness_label(self, hand_id: str) -> str:
-        """Map splitter's viewer-perspective hand_id to MediaPipe subject label."""
-        mp_label = "Right" if hand_id == "left" else "Left"
-        if self.flip:
-            mp_label = "Left" if mp_label == "Right" else "Right"
-        return mp_label
 
     def step(self, draw_overlay: bool = False) -> List[HandInput]:
         ok, frame = self._cap.read()
@@ -102,11 +88,11 @@ class RecognitionPipeline:
 
         hands = self._splitter.update(hand_results, flipped=self.flip)
 
-        # Per-hand gesture (DNN) + hand flags (rule-based for motion)
+        # Per-hand gesture classification
         per_hand_label: Dict[str, str] = {}
         per_hand_count: Dict[str, int] = {}
         per_hand_confirmed: Dict[str, bool] = {}
-        hand_flags: Dict[str, object] = {}
+        hand_flags: Dict[str, HandFlags] = {}
 
         for hand_id in ("left", "right"):
             state = hands[hand_id]
@@ -115,23 +101,26 @@ class RecognitionPipeline:
                 per_hand_label[hand_id] = label
                 per_hand_count[hand_id] = 0
                 per_hand_confirmed[hand_id] = False
-                hand_flags[hand_id] = compute_hand_flags(None, "", False)
+                hand_flags[hand_id] = HandFlags()
                 continue
 
-            mp_label = self._mp_handedness_label(hand_id)
-
-            # DNN gesture classification
-            lm_np = landmarks_to_numpy(state.landmarks)
-            raw_label, _conf, count = self._gesture_dnn.predict(lm_np)
+            # Translate splitter's "left"/"right" (viewer perspective) back to
+            # MediaPipe's subject-perspective label for the thumb check.
+            mp_label = "Right" if hand_id == "left" else "Left"
+            if self.flip:
+                mp_label = "Left" if mp_label == "Right" else "Right"
+            states = finger_states(state.landmarks, mp_label, flipped=self.flip)
+            up = fingers_point_up(state.landmarks)
+            raw_label, count = classify(states, up)
             label, just_confirmed = state.debouncer.update(raw_label)
 
             per_hand_label[hand_id] = label
             per_hand_count[hand_id] = count
             per_hand_confirmed[hand_id] = just_confirmed
-
-            # Rule-based flags for motion.py's palms_down detection
-            hand_flags[hand_id] = compute_hand_flags(
-                state.landmarks, mp_label, self.flip,
+            hand_flags[hand_id] = HandFlags(
+                present=True,
+                all5_extended=all(states),
+                fingers_up=up,
             )
 
         # Motion detection (chop / stir / hands_together / palms_down)
@@ -147,12 +136,18 @@ class RecognitionPipeline:
             confirmed = per_hand_confirmed[hand_id]
             per_motion, per_conf = motion_results.get(hand_id, (None, 0.0))
 
+            # Two-hand events override per-hand chop/stir for this frame.
             if both_label is not None:
                 per_motion = both_label
                 per_conf = max(per_conf, both_conf)
 
-            # Promote thumbs_up gesture → motion field on confirmation frame
-            if per_motion is None and label == LABEL_THUMBS_UP and confirmed:
+            # Promote ``thumbs_up`` gesture (완성) to the motion field on the
+            # frame it first debounces, so Part B can treat it as an event.
+            if (
+                per_motion is None
+                and label == LABEL_THUMBS_UP
+                and confirmed
+            ):
                 per_motion = LABEL_THUMBS_UP
                 per_conf = 1.0
 
