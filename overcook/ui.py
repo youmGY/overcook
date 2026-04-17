@@ -1,3 +1,4 @@
+"""UI components — popups, buttons, recipe/ingredient overlays."""
 import pygame
 from .engine import F, screen, get_img
 from .constants import C, INGS, ING_KEYS, RECIPES
@@ -5,10 +6,14 @@ from .utils import rr, txt, bar
 
 
 class Popup:
-    def __init__(self, x, y, message, color):
-        self.x = x; self.y = float(y)
-        self.msg = message; self.color = color
-        self.life = 80
+    """Floating notification that drifts up and fades out."""
+
+    def __init__(self, x: int, y: int, message: str, color: tuple) -> None:
+        self.x = x
+        self.y = float(y)
+        self.msg = message
+        self.color = color
+        self.life: int = 80
 
     def update(self): self.life -= 1; self.y -= 0.65
 
@@ -26,10 +31,19 @@ class Popup:
 
 
 class Btn:
-    def __init__(self, x, y, w, h, label, base_col=(50, 50, 110), lbl_col=(255, 255, 255)):
-        self.x = x; self.y = y; self.w = w; self.h = h
-        self.label = label; self.base = base_col; self.lbl_col = lbl_col
-        self.held = False; self.hover = False
+    """Clickable button with hover and press states."""
+
+    def __init__(self, x: int, y: int, w: int, h: int, label: str,
+                 base_col: tuple = (50, 50, 110), lbl_col: tuple = (255, 255, 255)) -> None:
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.label = label
+        self.base = base_col
+        self.lbl_col = lbl_col
+        self.held: bool = False
+        self.hover: bool = False
 
     @property
     def rect(self): return pygame.Rect(self.x, self.y, self.w, self.h)

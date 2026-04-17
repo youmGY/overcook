@@ -22,10 +22,12 @@ except Exception:
 from .engine import screen, clock, FPS, F, get_img
 from .constants import (
     C, INGS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS,
+    MAX_ACTIVE_ORDERS, STIR_BURN_EXTRA, PROXIMITY_THRESHOLD,
+    HUD_HEIGHT, SCORE_PENALTY_BURNED, SCORE_PENALTY_EXPIRED, ORDER_SPAWN_INTERVAL,
 )
 from .utils import rr, txt, bar
 from .ui import Popup, Btn, RecipeOverlay, IngredientOverlay
-from .entities import Station, Player, Order, _load_completed_food_img
+from .entities import Station, Player, Order, _load_completed_food_img, dish_name_from_contents
 
 if TYPE_CHECKING:
     from .input import GameInput
@@ -124,7 +126,8 @@ class Game:
         self.score = 0
         self.timer = GAME_TIME
         self.orders = []; self.popups = []
-        self.elapsed = 0.0; self.next_order = 15.0
+        self.elapsed = 0.0
+        self.next_order = ORDER_SPAWN_INTERVAL
         self._build_level()
         gw, gh = screen.get_size()
         gy = self._gy()
@@ -282,10 +285,10 @@ class Game:
 
     def _near(self):
         px, py = self.player.center()
-        best, bd = None, 9999
+        best, bd = None, float("inf")
         for s in self.stations:
             d = s.dist(px, py)
-            if d < 110 and d < bd:
+            if d < PROXIMITY_THRESHOLD and d < bd:
                 best, bd = s, d
         return best
 
@@ -323,15 +326,8 @@ class Game:
 
     @staticmethod
     def _dish_name_from_contents(contents):
-        h_ids = sorted(c.get("id") for c in contents if isinstance(c, dict) and c.get("id"))
-        if len(h_ids) != len(contents):
-            return None
-        for rec in RECIPES:
-            if not rec.get("cook", True):
-                continue
-            if sorted(rec.get("needs", [])) == h_ids:
-                return rec.get("name")
-        return None
+        """Identify the recipe name that matches *contents*."""
+        return dish_name_from_contents(contents)
 
     # ── station action handlers ───────────────────────────────────────
 
@@ -408,7 +404,7 @@ class Game:
                 self._lock_mode = "stir"
                 self._lock_station = st
             st.pot_stirs += 1
-            if st.pot_stirs >= STIR_ACTIONS + 3:
+            if st.pot_stirs >= STIR_ACTIONS + STIR_BURN_EXTRA:
                 st.pot_cooking = False
                 st.pot_cooked = True
                 st.pot_burned = True
@@ -439,14 +435,7 @@ class Game:
                 "dish_name": dish_name,
                 "cooked": True,
             }
-            st.pot_items = []
-            st.pot_cooked = False
-            st.pot_cooking = False
-            st.pot_stirs = 0
-            st.pot_prog = 0.0
-            st.pot_on = False
-            st.pot_burn = 0.0
-            st.pot_burned = False
+            st.reset_pot()
             self._pop(self.player.x, self.player.y - 20, "Picked!", C["green"])
         elif not h and burned:
             dish_name = self._dish_name_from_contents(st.pot_items)
@@ -458,14 +447,7 @@ class Game:
                 "cooked": True,
                 "burned": True,
             }
-            st.pot_items = []
-            st.pot_cooked = False
-            st.pot_cooking = False
-            st.pot_stirs = 0
-            st.pot_prog = 0.0
-            st.pot_on = False
-            st.pot_burn = 0.0
-            st.pot_burned = False
+            st.reset_pot()
             self._pop(self.player.x, self.player.y - 20, "Picked burned dish!", C["burn"])
         elif not h and st.pot_cooking:
             self._pop(st.cx(), st.y - 14, f"Stir {STIR_ACTIONS}x ({st.pot_stirs}/{STIR_ACTIONS})", C["white"])
@@ -505,9 +487,8 @@ class Game:
                 self._clear_submit_source(from_holding)
                 self._pop(st.cx(), st.y - 30, f"+{pts} pts! 🎉", C["green"])
         else:
-            penalty = 30
-            self.score = max(0, self.score - penalty)
-            self._pop(st.cx(), st.y - 14, f"No order! -{penalty} pts", C["red"])
+            self.score = max(0, self.score - SCORE_PENALTY_BURNED)
+            self._pop(st.cx(), st.y - 14, f"No order! -{SCORE_PENALTY_BURNED} pts", C["red"])
             self._clear_submit_source(from_holding)
 
     def _act_trash(self, st):
@@ -553,9 +534,16 @@ class Game:
     def _pop(self, x, y, msg, col):
         self.popups.append(Popup(x, y, msg, col))
 
+    def start_game(self) -> None:
+        """Reset state and begin a new game with initial orders."""
+        self.reset()
+        self.state = "play"
+        self._spawn_order()
+        self._spawn_order()
+
     def _spawn_order(self):
         active = sum(1 for o in self.orders if o.status == "active")
-        if active >= 3: return
+        if active >= MAX_ACTIVE_ORDERS: return
         self.orders.append(Order(random.choice(RECIPES)))
 
     # ── hint text ─────────────────────────────────────────────────────
@@ -592,7 +580,7 @@ class Game:
             if not h and st.pot_items and not st.pot_cooking and not st.pot_cooked:
                 return f"Stir to start cooking! (max {STIR_ACTIONS + 2} stirs)"
             if not h and st.pot_cooked: return "Action: Pick cooked dish"
-            if not h and st.pot_cooking: return f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {STIR_ACTIONS + 3})"
+            if not h and st.pot_cooking: return f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {STIR_ACTIONS + STIR_BURN_EXTRA})"
         if k == "submit":
             if h and h.get("cooked"):
                 if h.get("burned"): return "Action: Submit burned dish (penalty!)"
@@ -615,15 +603,13 @@ class Game:
 
         if self.state in ("title", "over"):
             if self.btn_start.update(mpos, mpressed):
-                self.reset(); self.state = "play"
-                self._spawn_order(); self._spawn_order()
+                self.start_game()
             return
 
         if self.state == "paused":
             if self.btn_pause_continue.update(mpos, mpressed): self.state = "play"
             if self.btn_pause_restart.update(mpos, mpressed):
-                self.reset(); self.state = "play"
-                self._spawn_order(); self._spawn_order()
+                self.start_game()
             return
 
         if self.overlay.active:
@@ -721,13 +707,13 @@ class Game:
         for o in self.orders:
             ev = o.update(dt)
             if ev == "failed":
-                self.score = max(0, self.score - 30)
-                self._pop(gw // 2, gh // 2 - 80, "Order failed! -30", C["red"])
+                self.score = max(0, self.score - SCORE_PENALTY_EXPIRED)
+                self._pop(gw // 2, gh // 2 - 80, f"Order failed! -{SCORE_PENALTY_EXPIRED}", C["red"])
 
         self.elapsed += dt
         if self.elapsed >= self.next_order:
             self._spawn_order()
-            self.next_order = self.elapsed + 15.0
+            self.next_order = self.elapsed + ORDER_SPAWN_INTERVAL
 
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
@@ -886,7 +872,7 @@ class Game:
             screen.blit(bs, (cx_ + card_w - bs.get_width() - 4, cy_ + card_h - bs.get_height() - 3))
 
     def _draw_hud(self, gw, gh):
-        HH = 44
+        HH = HUD_HEIGHT
         rr(screen, C["hud_bg"], (0, 0, gw, HH), 0)
         pygame.draw.line(screen, C["hud_brd"], (0, HH), (gw, HH), 1)
 

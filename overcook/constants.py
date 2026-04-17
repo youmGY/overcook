@@ -1,4 +1,18 @@
-C = {
+"""Game constants — colours, ingredients, recipes, and timing parameters.
+
+All game-wide configuration values live here. Modules should import
+individual names rather than using ``constants.*`` to keep dependencies
+explicit.
+"""
+from __future__ import annotations
+
+from typing import TypedDict
+
+# ── colour palette ────────────────────────────────────────────────────────
+
+Color = tuple[int, int, int]
+
+C: dict[str, Color] = {
     "bg":           (11,  11,  28),
     "tile_a":       (30,  30,  62),
     "tile_b":       (24,  24,  50),
@@ -35,36 +49,92 @@ C = {
     "ov_border": (80, 70,180),
 }
 
-INGS = {
+
+# ── ingredient definitions ────────────────────────────────────────────────
+
+class IngredientInfo(TypedDict):
+    """Schema for a single ingredient entry in :data:`INGS`."""
+    label: str
+    color: Color
+    can_chop: bool
+
+
+INGS: dict[str, IngredientInfo] = {
     "tomato":   {"label": "Tomato",   "color": (226, 75, 74),  "can_chop": True},
     "carrot":   {"label": "Carrot",   "color": (239,159, 39),  "can_chop": True},
     "onion":    {"label": "Onion",    "color": (175,169,236),  "can_chop": True},
     "mushroom": {"label": "Mushroom", "color": (180,178,169),  "can_chop": True},
     "rice":     {"label": "Rice",     "color": (232,224,208),  "can_chop": False},
 }
-ING_KEYS = list(INGS.keys())
 
-RECIPES = [
-    {"name": "Tomato Soup", "pts": 100, "needs": ["tomato_c","onion_c"], "cook": True,
+ING_KEYS: list[str] = list(INGS.keys())
+
+
+# ── recipe definitions ────────────────────────────────────────────────────
+
+class RecipeInfo(TypedDict):
+    """Schema for a single recipe entry in :data:`RECIPES`."""
+    name: str
+    pts: int
+    needs: list[str]
+    cook: bool
+    steps: list[str]
+
+
+RECIPES: list[RecipeInfo] = [
+    {"name": "Tomato Soup", "pts": 100, "needs": ["tomato_c", "onion_c"], "cook": True,
      "steps": ["CHOP Tomato & Onion", "Add to Stove & Cook"]},
-    {"name": "Fried Rice", "pts": 110, "needs": ["rice","tomato_c"], "cook": True,
+    {"name": "Fried Rice", "pts": 110, "needs": ["rice", "tomato_c"], "cook": True,
      "steps": ["Get Rice, CHOP Tomato", "Add both to Stove & Cook"]},
-    {"name": "Mushroom Stir-fry", "pts": 90, "needs": ["mushroom_c","onion_c"], "cook": True,
+    {"name": "Mushroom Stir-fry", "pts": 90, "needs": ["mushroom_c", "onion_c"], "cook": True,
      "steps": ["CHOP Mushroom & Onion", "Add to Stove & Quick Cook"]},
-    {"name": "Veg Curry", "pts": 150, "needs": ["carrot_c","onion_c","rice"], "cook": True,
-     "steps": ["CHOP Carrot & Onion","Get Rice", "Add all to Stove & Simmer"]},
+    {"name": "Veg Curry", "pts": 150, "needs": ["carrot_c", "onion_c", "rice"], "cook": True,
+     "steps": ["CHOP Carrot & Onion", "Get Rice", "Add all to Stove & Simmer"]},
     {"name": "Carrot Soup", "pts": 80, "needs": ["carrot_c"], "cook": True,
      "steps": ["CHOP Carrot", "Add to Stove & Cook"]},
-    # {"name": "Rice Bowl", "pts": 95, "needs": ["rice","mushroom_c"], "cook": True,
-    # "steps": ["Get Rice, CHOP Mushroom", "Add both to Stove & Cook"]},
-    # {"name": "Veg Salad", "pts": 70, "needs": ["tomato_c","mushroom_c"], "cook": False,
-    #  "steps": ["CHOP Tomato & Mushroom", "Mix & Plate (NO COOK)"]},  //not available right now
 ]
 
-BURN_TIME  = 8.0
-COOK_TIME  = 5.0
-CHOP_TIME  = 3.0
-CHOP_ACTIONS = 4
-STIR_ACTIONS = 5
-ORDER_TIME = 55.0
-GAME_TIME  = 240.0
+
+# ── timing & gameplay constants ───────────────────────────────────────────
+
+BURN_TIME: float = 8.0
+"""Seconds after cooking completes before the dish burns."""
+
+COOK_TIME: float = 5.0
+"""Legacy constant — retained for test compatibility."""
+
+CHOP_TIME: float = 3.0
+"""Time budget for chopping animation (informational)."""
+
+CHOP_ACTIONS: int = 4
+"""Number of chop hits required to finish chopping."""
+
+STIR_ACTIONS: int = 5
+"""Number of stir actions required to finish cooking."""
+
+ORDER_TIME: float = 55.0
+"""Seconds before an order expires."""
+
+GAME_TIME: float = 240.0
+"""Total game duration in seconds."""
+
+MAX_ACTIVE_ORDERS: int = 3
+"""Maximum number of simultaneous active orders."""
+
+STIR_BURN_EXTRA: int = 3
+"""Extra stirs beyond STIR_ACTIONS before the pot burns."""
+
+PROXIMITY_THRESHOLD: int = 110
+"""Pixel distance within which a player can interact with a station."""
+
+HUD_HEIGHT: int = 44
+"""Height of the top heads-up display bar in pixels."""
+
+SCORE_PENALTY_BURNED: int = 30
+"""Score penalty for submitting a burned dish."""
+
+SCORE_PENALTY_EXPIRED: int = 30
+"""Score penalty when an order expires."""
+
+ORDER_SPAWN_INTERVAL: float = 15.0
+"""Minimum seconds between automatic order spawns."""

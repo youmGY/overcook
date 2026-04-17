@@ -1,3 +1,4 @@
+"""Game entities — Station, Player, and Order domain objects."""
 import pygame
 import math
 import time
@@ -43,7 +44,12 @@ def _load_completed_food_img(filename, w, h):
         return None
 
 
-def _dish_name_from_contents(contents):
+def dish_name_from_contents(contents: list[dict]) -> str | None:
+    """Match a list of item dicts to a recipe name.
+
+    Returns the recipe name if all item IDs match a recipe's ``needs``,
+    otherwise ``None``.
+    """
     h_ids = sorted(c.get("id") for c in contents if isinstance(c, dict) and c.get("id"))
     if len(h_ids) != len(contents):
         return None
@@ -61,46 +67,102 @@ def _get_completed_food_img(holding, w, h):
     if not holding.get("cooked"):
         return None
 
-    dish_name = holding.get("dish_name") or _dish_name_from_contents(holding.get("contents", []))
+    dish_name = holding.get("dish_name") or dish_name_from_contents(holding.get("contents", []))
     if not dish_name:
         return _load_completed_food_img("unknown_dish.png", w, h)
     return _load_completed_food_img(f"{dish_name}.png", w, h)
 
 
 class Station:
-    SW = 110
-    SH = 28
+    """A kitchen station that the player can interact with.
 
-    def __init__(self, kind, sx, sy):
+    Station types: ``'ing'`` (pantry), ``'chop'``, ``'pot'``, ``'plate'``,
+    ``'submit'``, ``'trash'``.  State fields are initialised for all types
+    (polymorphism is achieved via ``kind``-gated logic).
+    """
+
+    SW: int = 110
+    SH: int = 28
+
+    # ── colour lookup table (replaces if/elif chains) ─────────────────
+    _COLORS: dict[str, tuple[str, str]] = {
+        "ing":    ("ing_base",    "ing_top"),
+        "chop":   ("chop_base",   "chop_top"),
+        "trash":  ("trash_base",  "trash_top"),
+        "submit": ("submit_base", "submit_top"),
+        "plate":  ("plate_base",  "plate_top"),
+    }
+
+    _LABELS: dict[str, str] = {
+        "ing": "Pantry", "chop": "Chop", "pot": "Stove",
+        "trash": "Trash", "plate": "Plate", "submit": "Submit",
+    }
+
+    def __init__(self, kind: str, sx: int, sy: int) -> None:
         self.kind = kind
-        self.x = sx; self.y = sy
-        self.w = self.SW; self.h = self.SH
+        self.x = sx
+        self.y = sy
+        self.w = self.SW
+        self.h = self.SH
 
-        self.chop_item   = None
-        self.chop_prog   = 0.0
-        self.chopping    = False
-        self.chop_hits   = 0
+        # Chop state
+        self.chop_item: dict | None = None
+        self.chop_prog: float = 0.0
+        self.chopping: bool = False
+        self.chop_hits: int = 0
 
-        self.pot_items   = []
-        self.pot_prog    = 0.0
-        self.pot_cooking = False
-        self.pot_stirs   = 0
-        self.pot_cooked  = False
-        self.pot_burn    = 0.0
-        self.pot_on      = False
-        self.pot_burned  = False
+        # Pot state
+        self.pot_items: list[dict] = []
+        self.pot_prog: float = 0.0
+        self.pot_cooking: bool = False
+        self.pot_stirs: int = 0
+        self.pot_cooked: bool = False
+        self.pot_burn: float = 0.0
+        self.pot_on: bool = False
+        self.pot_burned: bool = False
 
-        self.plate_item  = None
+        # Plate state
+        self.plate_item: dict | None = None
 
     @property
-    def rect(self): return pygame.Rect(self.x, self.y, self.w, self.h)
-    def cx(self): return self.x + self.w // 2
-    def cy(self): return self.y + self.h // 2
+    def rect(self) -> pygame.Rect:
+        """Bounding rectangle for collision detection."""
+        return pygame.Rect(self.x, self.y, self.w, self.h)
 
-    def dist(self, px, py):
+    def cx(self) -> int:
+        """Horizontal centre of the station."""
+        return self.x + self.w // 2
+
+    def cy(self) -> int:
+        """Vertical centre of the station."""
+        return self.y + self.h // 2
+
+    def dist(self, px: int, py: int) -> float:
+        """Euclidean distance from *(px, py)* to the station centre."""
         return math.hypot(px - self.cx(), py - self.cy())
 
-    def update(self, dt):
+    # ── state reset helpers ───────────────────────────────────────────
+
+    def reset_pot(self) -> None:
+        """Reset all pot-related state to initial values."""
+        self.pot_items = []
+        self.pot_cooked = False
+        self.pot_cooking = False
+        self.pot_stirs = 0
+        self.pot_prog = 0.0
+        self.pot_on = False
+        self.pot_burn = 0.0
+        self.pot_burned = False
+
+    def reset_chop(self) -> None:
+        """Reset all chop-related state to initial values."""
+        self.chop_item = None
+        self.chop_prog = 0.0
+        self.chopping = False
+        self.chop_hits = 0
+
+    def update(self, dt: float) -> list[str]:
+        """Advance station state by *dt* seconds. Returns a list of events."""
         events = []
         if self.kind == "chop" and self.chopping and self.chop_item \
                 and not self.chop_item.get("chopped"):
@@ -128,19 +190,13 @@ class Station:
 
         return events
 
-    def draw(self, surf, gy):
-        if self.kind == "ing":
-            base, top = C["ing_base"], C["ing_top"]
-        elif self.kind == "chop":
-            base, top = C["chop_base"], C["chop_top"]
-        elif self.kind == "pot":
+    def draw(self, surf: pygame.Surface, gy: int) -> None:
+        """Render the station onto *surf*."""
+        if self.kind == "pot":
             base, top = C["pot_base"], C["pot_on"] if self.pot_on else C["pot_off"]
-        elif self.kind == "trash":
-            base, top = C["trash_base"], C["trash_top"]
-        elif self.kind == "submit":
-            base, top = C["submit_base"], C["submit_top"]
-        else:  # plate
-            base, top = C["plate_base"], C["plate_top"]
+        else:
+            base_key, top_key = self._COLORS.get(self.kind, ("plate_base", "plate_top"))
+            base, top = C[base_key], C[top_key]
 
         rr(surf, base, (self.x + 8, self.y + self.h, self.w - 16, gy - self.y - self.h), 2)
         rr(surf, top, (self.x, self.y, self.w, self.h), 6)
@@ -152,14 +208,9 @@ class Station:
         ix, iy = self.cx(), self.y - 18
         self._draw_icon(surf, ix, iy)
 
-    def _station_label(self):
-        if self.kind == "ing":    return "Pantry"
-        if self.kind == "chop":   return "Chop"
-        if self.kind == "pot":    return "Stove"
-        if self.kind == "trash":  return "Trash"
-        if self.kind == "plate":  return "Plate"
-        if self.kind == "submit": return "Submit"
-        return ""
+    def _station_label(self) -> str:
+        """Display label for this station type."""
+        return self._LABELS.get(self.kind, "")
 
     def _draw_icon(self, surf, ix, iy):
         if self.kind == "ing":
@@ -247,16 +298,22 @@ class Station:
 
 
 class Player:
-    PW, PH = 30, 40
+    """The player character — owns movement, facing, and held item."""
 
-    def __init__(self, x, y):
-        self.x = float(x); self.y = float(y)
-        self.vx = 0.0; self.vy = 0.0
-        self.facing = 1
-        self.holding = None
-        self.walk_t = 0.0
+    PW: int = 30
+    PH: int = 40
 
-    def center(self):
+    def __init__(self, x: int, y: int) -> None:
+        self.x = float(x)
+        self.y = float(y)
+        self.vx: float = 0.0
+        self.vy: float = 0.0
+        self.facing: int = 1
+        self.holding: dict | None = None
+        self.walk_t: float = 0.0
+
+    def center(self) -> tuple[int, int]:
+        """Return the pixel centre of the player sprite."""
         return (int(self.x + self.PW // 2), int(self.y + self.PH // 2))
 
     def update(self, move_dir, dt, gw, gy):
@@ -316,7 +373,7 @@ class Player:
             half = item_size // 2
 
             completed_img = _get_completed_food_img(self.holding, item_size, item_size)
-            dish_name = self.holding.get("dish_name") or _dish_name_from_contents(self.holding.get("contents", []))
+            dish_name = self.holding.get("dish_name") or dish_name_from_contents(self.holding.get("contents", []))
             is_known_cooked = bool(dish_name)
 
             img = completed_img or get_img(item_id, item_size, item_size)
@@ -352,17 +409,21 @@ class Player:
 
 
 class Order:
-    _ctr = 0
+    """A customer order with a recipe, countdown timer, and status."""
 
-    def __init__(self, recipe):
+    _ctr: int = 0
+
+    def __init__(self, recipe: dict) -> None:
         Order._ctr += 1
-        self.id = Order._ctr
+        self.id: int = Order._ctr
         self.recipe = recipe
-        self.t = ORDER_TIME
-        self.status = "active"
+        self.t: float = ORDER_TIME
+        self.status: str = "active"
 
-    def update(self, dt):
-        if self.status != "active": return None
+    def update(self, dt: float) -> str | None:
+        """Tick the order timer. Returns ``'failed'`` if the order expires."""
+        if self.status != "active":
+            return None
         self.t = max(0.0, self.t - dt)
         if self.t <= 0:
             self.status = "failed"

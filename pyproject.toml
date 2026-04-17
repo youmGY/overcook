@@ -12,6 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
+overcook = "overcook.cli:main"
 demo-pipeline = "examples.demo_full_pipeline:main"
 
 [tool.hatch.build.targets.wheel]
