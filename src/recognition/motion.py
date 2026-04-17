@@ -229,6 +229,9 @@ class _HandMotionState:
     # Previous oscillation counts for delta-based counting
     prev_chop_osc: int = 0
     prev_stir_osc: int = 0
+    # Remainder of half-strokes not yet forming a full round-trip
+    chop_half_remainder: int = 0
+    stir_half_remainder: int = 0
 
 
 class MotionDetector:
@@ -410,7 +413,14 @@ class MotionDetector:
 
             if output is not None:
                 conf = min(1.0, max(r_y_amp, r_x_amp) / _OSCILLATION_AMP)
-                count = active_chop_delta + active_stir_delta
+                # Convert half-stroke deltas to full round-trip counts
+                chop_total_halves = active_chop_delta + st.chop_half_remainder
+                stir_total_halves = active_stir_delta + st.stir_half_remainder
+                chop_rounds = chop_total_halves // 2
+                stir_rounds = stir_total_halves // 2
+                st.chop_half_remainder = chop_total_halves % 2
+                st.stir_half_remainder = stir_total_halves % 2
+                count = chop_rounds + stir_rounds
                 results[hand] = (output, conf, count)
 
         # --- two-hand events --------------------------------------------------
