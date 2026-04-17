@@ -1,0 +1,25 @@
+[project]
+name = "overcook"
+version = "0.1.0"
+description = "오버쿡 스타일 요리 게임 — Pygame + MediaPipe 제스처 인식"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mediapipe==0.10.9",
+    "onnxruntime>=1.24.4",
+    "opencv-python>=4.13.0.92",
+    "pygame>=2.6.1",
+]
+
+[project.scripts]
+run-stage7 = "overcook.recognition.run_stage7:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["overcook"]
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -884,3 +884,174 @@
 15:36:19 [INFO] Gesture recognition pipeline initialised
 15:36:19 [INFO] --- GAME RESET ---
 15:36:20 [INFO] --- GAME RESET ---
+15:51:30 [ERROR] Failed to init gesture pipeline: No module named 'cv2'
+15:51:30 [INFO] --- GAME RESET ---
+15:51:32 [INFO] --- GAME RESET ---
+15:51:57 [DEBUG] matplotlib data path: /home/willtek/overcook/.venv/lib/python3.11/site-packages/matplotlib/mpl-data
+15:51:57 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:51:57 [DEBUG] interactive is False
+15:51:57 [DEBUG] platform is linux
+15:51:57 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:51:57 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:51:58 [INFO] Gesture recognition pipeline initialised
+15:51:58 [INFO] --- GAME RESET ---
+15:51:59 [INFO] --- GAME RESET ---
+15:52:57 [WARNING] POT_BURNED: over-stirred
+15:54:33 [DEBUG] matplotlib data path: /home/willtek/overcook/.venv/lib/python3.11/site-packages/matplotlib/mpl-data
+15:54:33 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:54:33 [DEBUG] interactive is False
+15:54:33 [DEBUG] platform is linux
+15:54:33 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:54:33 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:54:34 [INFO] Gesture recognition pipeline initialised
+15:54:34 [INFO] --- GAME RESET ---
+15:54:36 [INFO] --- GAME RESET ---
+15:55:53 [DEBUG] matplotlib data path: /home/willtek/overcook/.venv/lib/python3.11/site-packages/matplotlib/mpl-data
+15:55:53 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:55:53 [DEBUG] interactive is False
+15:55:53 [DEBUG] platform is linux
+15:55:53 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:55:53 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:55:54 [INFO] Gesture recognition pipeline initialised
+15:55:54 [INFO] --- GAME RESET ---
+15:55:56 [INFO] --- GAME RESET ---
+15:57:23 [DEBUG] matplotlib data path: /home/willtek/overcook/.venv/lib/python3.11/site-packages/matplotlib/mpl-data
+15:57:23 [DEBUG] CONFIGDIR=/home/willtek/.config/matplotlib
+15:57:23 [DEBUG] interactive is False
+15:57:23 [DEBUG] platform is linux
+15:57:23 [DEBUG] CACHEDIR=/home/willtek/.cache/matplotlib
+15:57:23 [DEBUG] Using fontManager instance from /home/willtek/.cache/matplotlib/fontlist-v390.json
+15:57:24 [INFO] Gesture recognition pipeline initialised
+15:57:24 [INFO] --- GAME RESET ---
+15:57:27 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:12 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:14:19 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---
+16:15:52 [INFO] --- GAME RESET ---

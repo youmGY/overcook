@@ -4,8 +4,8 @@ import time
 import random
 import os
 
-from engine import F, get_img
-from constants import (
+from .engine import F, get_img
+from .constants import (
     C,
     INGS,
     RECIPES,
@@ -14,7 +14,7 @@ from constants import (
     CHOP_ACTIONS,
     STIR_ACTIONS,
 )
-from utils import rr, bar
+from .utils import rr, bar
 
 
 COMPLETED_FOOD_DIR = "assets/ccompleted_foods"

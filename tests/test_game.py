@@ -89,25 +89,26 @@ _pygame.event.get.return_value = []
 sys.modules["pygame"] = _pygame
 
 # ─── now import game modules ────────────────────────────────────────────────
-import constants
-from constants import (
+import overcook.constants as constants
+from overcook.constants import (
     C, INGS, ING_KEYS, RECIPES,
     BURN_TIME, COOK_TIME, CHOP_TIME, ORDER_TIME, GAME_TIME,
     CHOP_ACTIONS, STIR_ACTIONS,
 )
 
-import engine
+import overcook.engine as engine
 engine.screen = _FakeSurface()
 engine.F = {sz: _FakeFont() for sz in (12, 14, 18, 24, 32, 40)}
 
-import utils
-from utils import bar
+import overcook.utils as utils
+from overcook.utils import bar
 
-import entities
-from entities import Station, Player, Order
+import overcook.entities as entities
+from overcook.entities import Station, Player, Order
 
-import main as game_module
-from main import Game, GameInput
+import overcook.game as game_module
+from overcook.game import Game
+from overcook.input import GameInput
 
 
 # ════════════════════════════════════════════════════════════════════════════

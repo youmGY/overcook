@@ -1,5 +1,5 @@
 import pygame
-from engine import F
+from .engine import F
 
 
 def rr(surf, color, rect, r=6):

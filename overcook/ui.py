@@ -1,7 +1,7 @@
 import pygame
-from engine import F, screen, get_img
-from constants import C, INGS, ING_KEYS, RECIPES
-from utils import rr, txt, bar
+from .engine import F, screen, get_img
+from .constants import C, INGS, ING_KEYS, RECIPES
+from .utils import rr, txt, bar
 
 
 class Popup:
