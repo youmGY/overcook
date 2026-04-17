@@ -16,7 +16,7 @@ import logging
 from typing import Optional
 
 from engine import screen, clock, FPS, F
-from constants import C, INGS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
+from constants import C, INGS, ING_KEYS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
 from utils import rr, txt, bar
 from ui import Popup, Btn, RecipeOverlay, IngredientOverlay
 from entities import Station, Player, Order
@@ -502,6 +502,11 @@ class Game:
             return
 
         if self.overlay.active:
+            if gi.move_to_slot is not None:
+                idx = gi.move_to_slot - 1
+                if 0 <= idx < len(ING_KEYS):
+                    self._pick_ingredient(ING_KEYS[idx])
+                    return
             if gi.overlay_click:
                 key = self.overlay.check_click(gi.overlay_click)
                 if key:
