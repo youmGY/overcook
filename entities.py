@@ -2,6 +2,7 @@ import pygame
 import math
 import time
 import random
+import os
 
 from engine import F, get_img
 from constants import (
@@ -14,6 +15,56 @@ from constants import (
     STIR_ACTIONS,
 )
 from utils import rr, bar
+
+
+COMPLETED_FOOD_DIR = "assets/ccompleted_foods"
+_COMPLETED_IMG_CACHE = {}
+
+
+def _load_completed_food_img(filename, w, h):
+    key = (filename, w, h)
+    if key in _COMPLETED_IMG_CACHE:
+        return _COMPLETED_IMG_CACHE[key]
+
+    path = os.path.join(COMPLETED_FOOD_DIR, filename)
+    if not os.path.exists(path):
+        _COMPLETED_IMG_CACHE[key] = None
+        return None
+
+    try:
+        if not hasattr(pygame, "image"):
+            return None
+        img = pygame.image.load(path).convert_alpha()
+        img = pygame.transform.smoothscale(img, (w, h))
+        _COMPLETED_IMG_CACHE[key] = img
+        return img
+    except Exception:
+        _COMPLETED_IMG_CACHE[key] = None
+        return None
+
+
+def _dish_name_from_contents(contents):
+    h_ids = sorted(c.get("id") for c in contents if isinstance(c, dict) and c.get("id"))
+    if len(h_ids) != len(contents):
+        return None
+    for rec in RECIPES:
+        if not rec.get("cook", True):
+            continue
+        if sorted(rec.get("needs", [])) == h_ids:
+            return rec.get("name")
+    return None
+
+
+def _get_completed_food_img(holding, w, h):
+    if holding.get("burned"):
+        return _load_completed_food_img("burned_dish.png", w, h)
+    if not holding.get("cooked"):
+        return None
+
+    dish_name = holding.get("dish_name") or _dish_name_from_contents(holding.get("contents", []))
+    if not dish_name:
+        return None
+    return _load_completed_food_img(f"{dish_name}.png", w, h)
 
 
 class Station:
@@ -260,15 +311,23 @@ class Player:
             hx = px + 16 + f * 24
             hy = py + 4 + bob
             item_id = self.holding.get("id", "")
-            
-            img = get_img(item_id, 26, 26)
+            is_completed = bool(self.holding.get("cooked"))
+            item_size = 42 if is_completed else 26
+            half = item_size // 2
+
+            completed_img = _get_completed_food_img(self.holding, item_size, item_size)
+            dish_name = self.holding.get("dish_name") or _dish_name_from_contents(self.holding.get("contents", []))
+            is_known_cooked = bool(dish_name)
+
+            img = completed_img or get_img(item_id, item_size, item_size)
             if img:
-                surf.blit(img, (hx - 13, hy - 13))
-                if self.holding.get("burned"):
+                surf.blit(img, (hx - half, hy - half))
+                if self.holding.get("burned") and not completed_img:
                     lbl = F[12].render("BURN", True, (255, 200, 100))
                     surf.blit(lbl, (hx - lbl.get_width() // 2, hy - lbl.get_height() // 2))
-                elif self.holding.get("cooked"):
-                    lbl = F[12].render("Done", True, (255, 255, 255))
+                elif self.holding.get("cooked") and not completed_img:
+                    cooked_txt = "Done" if is_known_cooked else "Unknown"
+                    lbl = F[12].render(cooked_txt, True, (255, 255, 255))
                     surf.blit(lbl, (hx - lbl.get_width() // 2, hy - lbl.get_height() // 2))
             else:
                 bid = item_id.replace("_c", "")
@@ -277,12 +336,14 @@ class Player:
                      else C["green"] if self.holding.get("cooked") \
                      else C["lime"]  if self.holding.get("chopped") \
                      else ing.get("color", (150, 150, 150))
-                pygame.draw.circle(surf, col, (hx, hy), 13)
-                pygame.draw.circle(surf, (255, 255, 255, 50), (hx, hy), 13, 1)
+                rad = 17 if is_completed else 13
+                pygame.draw.circle(surf, col, (hx, hy), rad)
+                pygame.draw.circle(surf, (255, 255, 255, 50), (hx, hy), rad, 1)
                 if self.holding.get("burned"):
                     lbl = F[12].render("BURN", True, (255, 200, 100))
                 elif self.holding.get("cooked"):
-                    lbl = F[12].render("Done", True, (255, 255, 255))
+                    cooked_txt = "Done" if is_known_cooked else "Unknown"
+                    lbl = F[12].render(cooked_txt, True, (255, 255, 255))
                 elif self.holding.get("chopped"):
                     lbl = F[12].render("Cut", True, (0, 0, 0))
                 else:
