@@ -300,6 +300,17 @@ class Game:
     def _clear_submit_source(self, from_holding: bool):
         if from_holding: self.player.holding = None
 
+    def _dish_name_from_contents(self, contents):
+        h_ids = sorted(c.get("id") for c in contents if isinstance(c, dict) and c.get("id"))
+        if len(h_ids) != len(contents):
+            return None
+        for rec in RECIPES:
+            if not rec.get("cook", True):
+                continue
+            if sorted(rec.get("needs", [])) == h_ids:
+                return rec.get("name")
+        return None
+
     def _act_ing(self, _st):
         if not self.player.holding:
             self.overlay.active = True
@@ -391,10 +402,12 @@ class Game:
                 self.player.holding = None
                 self._pop(st.cx(), st.y - 14, "Added ✓", C["gold"])
         elif not h and st.pot_cooked and not burned:
+            dish_name = self._dish_name_from_contents(st.pot_items)
             self.player.holding = {
                 "id": "cooked",
                 "label": "Cooked Dish",
                 "contents": list(st.pot_items),
+                "dish_name": dish_name,
                 "cooked": True,
             }
             st.pot_items = []
@@ -407,10 +420,12 @@ class Game:
             st.pot_burned = False
             self._pop(self.player.x, self.player.y - 20, "Picked!", C["green"])
         elif not h and burned:
+            dish_name = self._dish_name_from_contents(st.pot_items)
             self.player.holding = {
                 "id": "cooked",
                 "label": "Burned Dish",
                 "contents": list(st.pot_items),
+                "dish_name": dish_name,
                 "cooked": True,
                 "burned": True,
             }
