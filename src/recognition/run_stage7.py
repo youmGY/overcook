@@ -18,6 +18,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", type=int, default=0)
     p.add_argument("--low-res", action="store_true")
     p.add_argument("--flip", action="store_true", help="Selfie-style mirror")
+    p.add_argument("--no-gui", action="store_true",
+                   help="Run without OpenCV window (headless/server mode)")
     p.add_argument("--log", type=str, default=None,
                    help="Path to CSV log file for motion debug (e.g. motion_log.csv)")
     return p.parse_args()
@@ -25,6 +27,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    has_display = bool(os.environ.get("DISPLAY")) or bool(os.environ.get("WAYLAND_DISPLAY"))
+    no_gui = args.no_gui or not has_display
+
+    if no_gui:
+        print("[Stage7] GUI disabled (no display detected or --no-gui set).")
+
     w, h = (320, 240) if args.low_res else (640, 480)
     pipe = RecognitionPipeline(
         camera_cfg=CameraConfig(device_index=args.device, width=w, height=h, fps=30),
@@ -47,7 +55,10 @@ def main() -> None:
         ])
         print(f"[Stage7] Logging motion debug to: {os.path.abspath(args.log)}")
 
-    print("[Stage7] Started. Press 'q' to quit.")
+    if no_gui:
+        print("[Stage7] Started in headless mode. Stop with Ctrl+C.")
+    else:
+        print("[Stage7] Started. Press 'q' to quit.")
     t0 = perf_counter()
     flash_text = ""
     flash_until = 0.0
@@ -189,12 +200,14 @@ def main() -> None:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA,
             )
 
-            cv2.imshow("Stage7 - Integrated Pipeline", frame)
-            if (cv2.waitKey(1) & 0xFF) == ord("q"):
-                break
+            if not no_gui:
+                cv2.imshow("Stage7 - Integrated Pipeline", frame)
+                if (cv2.waitKey(1) & 0xFF) == ord("q"):
+                    break
     finally:
         pipe.close()
-        cv2.destroyAllWindows()
+        if not no_gui:
+            cv2.destroyAllWindows()
         if log_file:
             log_file.close()
             print(f"[Stage7] Log saved: {os.path.abspath(args.log)}")

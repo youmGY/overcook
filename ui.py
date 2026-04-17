@@ -137,6 +137,7 @@ class IngredientOverlay:
 
     def __init__(self):
         self.active = False
+        self.highlighted: int | None = None   # 0-based index of highlighted card
         self.cards  = []
         self._build_cards()
 
@@ -167,10 +168,12 @@ class IngredientOverlay:
         for i, (rect, key) in enumerate(self.cards):
             ing = INGS[key]
             hover = rect.collidepoint(mpos)
-            bg = C["ov_sel"] if hover else C["ov_card"]
+            selected = (self.highlighted == i)
+            bg = C["ov_sel"] if (hover or selected) else C["ov_card"]
             rr(surf, bg, rect, 10)
-            pygame.draw.rect(surf, C["ov_border"] if hover else (60, 60, 100),
-                             rect, 2, border_radius=10)
+            border_col = C["ov_border"] if (hover or selected) else (60, 60, 100)
+            border_w = 3 if selected else 2
+            pygame.draw.rect(surf, border_col, rect, border_w, border_radius=10)
 
             img = get_img(key, 40, 40)
             if img:
@@ -192,6 +195,17 @@ class IngredientOverlay:
 
         txt(surf, "Press 1-5 to select  |  Click card  |  ESC to cancel", 12,
             (140, 140, 170), gw // 2, self.cards[0][0].bottom + 20)
+
+    def highlight_by_index(self, idx: int) -> None:
+        """Highlight ingredient card by 0-based index."""
+        if 0 <= idx < len(self.cards):
+            self.highlighted = idx
+
+    def confirm_highlighted(self) -> str | None:
+        """Return the ingredient key of the highlighted card, or None."""
+        if self.highlighted is not None and 0 <= self.highlighted < len(self.cards):
+            return self.cards[self.highlighted][1]
+        return None
 
     def check_click(self, mpos):
         for rect, key in self.cards:
