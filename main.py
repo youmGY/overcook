@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Overcook — 오버쿡 스타일 요리 게임.
 
-실행: python main.py
+실행: DISPLAY=:0 python game.py --gesture
 설치: pip install pygame
 """
 import argparse
