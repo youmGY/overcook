@@ -19,7 +19,7 @@ from .gesture import (
 )
 from .hand_split import HandSplitter
 from .hand_tracker import HandTracker, HandTrackerConfig
-from .motion import MotionDebug, MotionDetector, compute_hand_flags
+from .motion import MotionDebug, MotionDetector
 
 
 @dataclass
@@ -32,7 +32,7 @@ class HandInput:
     finger_count: int                      # 0~5
     target_slot: Optional[int]             # 1..5 when finger_N, else None
     gesture_confirmed: bool                # debounce-confirmed this frame
-    motion: Optional[str]                  # chop/stir/hands_together/palms_down/thumbs_up/None
+    motion: Optional[str]                  # chop/stir/thumbs_up/None
     motion_confidence: float               # 0.0~1.0
     motion_count: int = 0                  # new chop/stir strokes this frame (0, 1, rarely 2+)
     stale: bool = False
@@ -83,71 +83,8 @@ class RecognitionPipeline:
     def motion_debug(self) -> Dict[str, MotionDebug]:
         return self._motion.debug
 
-    def _mp_handedness_label(self, hand_id: str) -> str:
-        """Map splitter's viewer-perspective hand_id to MediaPipe subject label."""
-        mp_label = "Right" if hand_id == "left" else "Left"
-        if self.flip:
-            mp_label = "Left" if mp_label == "Right" else "Right"
-        return mp_label
-
-    def step(self, draw_overlay: bool = False) -> List[HandInput]:
-        ok, frame = self._cap.read()
-        if not ok:
-            return []
-        if self.flip:
-            import cv2
-
-            frame = cv2.flip(frame, 1)
-
-        hand_results = self._hands.process(frame, draw=draw_overlay)
-        hands = self._splitter.update(hand_results, flipped=self.flip)
-
-        # Per-hand gesture (DNN) + hand flags (rule-based for motion)
-        per_hand_label: Dict[str, str] = {}
-        per_hand_count: Dict[str, int] = {}
-        per_hand_confirmed: Dict[str, bool] = {}
-        hand_flags: Dict[str, object] = {}
-
-        for hand_id in ("left", "right"):
-            state = hands[hand_id]
-            if state.landmarks is None:
-                label, _ = state.debouncer.update(LABEL_UNKNOWN)
-                per_hand_label[hand_id] = label
-                per_hand_count[hand_id] = 0
-                per_hand_confirmed[hand_id] = False
-                hand_flags[hand_id] = compute_hand_flags(None, "", False)
-                continue
-
-            mp_label = self._mp_handedness_label(hand_id)
-
-            # DNN gesture classification
-            lm_np = landmarks_to_numpy(state.landmarks)
-            raw_label, _conf, count = self._gesture_dnn.predict(lm_np)
-            label, just_confirmed = state.debouncer.update(raw_label)
-
-            per_hand_label[hand_id] = label
-            per_hand_count[hand_id] = count
-            per_hand_confirmed[hand_id] = just_confirmed
-
-            # Rule-based flags for motion.py's palms_down detection
-            hand_flags[hand_id] = compute_hand_flags(
-                state.landmarks, mp_label, self.flip,
-            )
-
-        # Extract wrist positions from hand landmarks for chop/stir detection
-        hand_wrists: Dict[str, Optional[Tuple[float, float]]] = {}
-        for hand_id in ("left", "right"):
-            state = hands[hand_id]
-            if state.landmarks is not None:
-                wlm = state.landmarks[_LM_WRIST]
-                hand_wrists[hand_id] = (wlm.x, wlm.y)
-            else:
-                hand_wrists[hand_id] = None
-
-        # Motion detection (chop / stir / hands_together / palms_down)
-        motion_results = self._motion.update(hand_flags, hand_wrists)
-        both_label, both_conf, _both_cnt = motion_results.get("both", (None, 0.0, 0))
-
+    def _build_hand_inputs(self, hands, per_hand_label, per_hand_count, per_hand_confirmed, motion_results):
+        """Build HandInput list from per-hand data."""
         outputs: List[HandInput] = []
         for hand_id in ("left", "right"):
             state = hands[hand_id]
@@ -156,11 +93,6 @@ class RecognitionPipeline:
             count = per_hand_count[hand_id]
             confirmed = per_hand_confirmed[hand_id]
             per_motion, per_conf, per_count = motion_results.get(hand_id, (None, 0.0, 0))
-
-            if both_label is not None:
-                per_motion = both_label
-                per_conf = max(per_conf, both_conf)
-                per_count = 0  # two-hand events have no stroke count
 
             # Promote thumbs_up gesture → motion field on confirmation frame
             if per_motion is None and label == LABEL_THUMBS_UP and confirmed:
@@ -182,7 +114,58 @@ class RecognitionPipeline:
                     stale=state.stale,
                 )
             )
+        return outputs
 
+    def step(self, draw_overlay: bool = False) -> List[HandInput]:
+        ok, frame = self._cap.read()
+        if not ok:
+            return []
+        if self.flip:
+            import cv2
+
+            frame = cv2.flip(frame, 1)
+
+        hand_results = self._hands.process(frame, draw=draw_overlay)
+        hands = self._splitter.update(hand_results, flipped=self.flip)
+
+        # Per-hand DNN gesture classification
+        per_hand_label: Dict[str, str] = {}
+        per_hand_count: Dict[str, int] = {}
+        per_hand_confirmed: Dict[str, bool] = {}
+
+        for hand_id in ("left", "right"):
+            state = hands[hand_id]
+            if state.landmarks is None:
+                label, _ = state.debouncer.update(LABEL_UNKNOWN)
+                per_hand_label[hand_id] = label
+                per_hand_count[hand_id] = 0
+                per_hand_confirmed[hand_id] = False
+                continue
+
+            lm_np = landmarks_to_numpy(state.landmarks)
+            raw_label, _conf, count = self._gesture_dnn.predict(lm_np)
+            label, just_confirmed = state.debouncer.update(raw_label)
+
+            per_hand_label[hand_id] = label
+            per_hand_count[hand_id] = count
+            per_hand_confirmed[hand_id] = just_confirmed
+
+        # Extract wrist positions for chop/stir detection
+        hand_wrists: Dict[str, Optional[Tuple[float, float]]] = {}
+        for hand_id in ("left", "right"):
+            state = hands[hand_id]
+            if state.landmarks is not None:
+                wlm = state.landmarks[_LM_WRIST]
+                hand_wrists[hand_id] = (wlm.x, wlm.y)
+            else:
+                hand_wrists[hand_id] = None
+
+        # Motion detection (chop / stir)
+        motion_results = self._motion.update(hand_wrists)
+
+        outputs = self._build_hand_inputs(
+            hands, per_hand_label, per_hand_count, per_hand_confirmed, motion_results,
+        )
         self._last_frame = frame
         return outputs
 

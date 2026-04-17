@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 오버쿡 스타일 요리 게임 (pygame)
-실행: python game.py
+실행: python main.py
 설치: pip install pygame
 
 조작: 화면 버튼 (← →  이동 | Action 버튼)
@@ -53,7 +53,6 @@ class GameInput:
     station_click: Optional[tuple] = None
     chop:         bool = False
     stir:         bool = False
-    put_down:     bool = False
     confirm:      bool = False
     move_dir:      int  = 0
     action:        bool = False
@@ -106,7 +105,6 @@ def merge_inputs(keyboard_gi: GameInput, gesture_gi: GameInput) -> GameInput:
         station_click=keyboard_gi.station_click,
         chop=keyboard_gi.chop or gesture_gi.chop,
         stir=keyboard_gi.stir or gesture_gi.stir,
-        put_down=keyboard_gi.put_down or gesture_gi.put_down,
         confirm=keyboard_gi.confirm or gesture_gi.confirm,
         move_dir=keyboard_gi.move_dir or gesture_gi.move_dir,
         action=keyboard_gi.action or gesture_gi.action,
@@ -1084,7 +1082,6 @@ def main():
                         game._spawn_order(); game._spawn_order()
                 if event.key == pygame.K_c and game.state == "play": _gi_frame["chop"] = True
                 if event.key == pygame.K_v and game.state == "play": _gi_frame["stir"] = True
-                if event.key == pygame.K_g and game.state == "play": _gi_frame["put_down"] = True
                 if event.key == pygame.K_r:
                     if game.state == "play":
                         game.recipe_overlay.active = not game.recipe_overlay.active
@@ -1124,7 +1121,6 @@ def main():
             confirm      = _gi_frame.get("confirm",  False),
             chop         = _gi_frame.get("chop",     False),
             stir         = _gi_frame.get("stir",     False),
-            put_down     = _gi_frame.get("put_down", False),
             overlay_click= overlay_click,
         )
         gi = merge_inputs(keyboard_gi, gesture_gi)

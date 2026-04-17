@@ -1,16 +1,13 @@
-"""Chop / stir / hands-together / palms-down motion detection.
+"""Chop / stir motion detection.
 
-Semantic mapping (see copilot-plan.md):
+Semantic mapping:
 
     chop_motion      : 썰기    (single hand, y-axis oscillation)
     stir_motion      : 조리    (single hand, x-axis oscillation)
-    hands_together   : 집기    (both wrists close together, held N frames)
-    palms_down       : 놓기    (both hands 5-extended, palm-down, held N frames)
 
-Chop / stir detection uses a sliding-window oscillation counting approach
-(ported from gshan branch): wrist x/y coordinates are buffered and direction
-reversals with sufficient amplitude are counted.  No Pose dependency is
-required for chop/stir — only hand-landmark wrist positions.
+Chop / stir detection uses a sliding-window oscillation counting approach:
+wrist x/y coordinates are buffered and direction reversals with sufficient
+amplitude are counted.  Only hand-landmark wrist positions are required.
 
 완성 is the per-frame ``thumbs_up`` gesture and is handled in
 [gesture.py](gesture.py) / [interface.py](interface.py); it does not flow
@@ -18,7 +15,6 @@ through this detector.
 """
 from __future__ import annotations
 
-import math
 from collections import deque
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -26,72 +22,9 @@ from typing import Deque, Dict, Optional, Tuple
 
 import numpy as np
 
-# Hand landmark indices for rule-based orientation checks (palms_down).
-_WRIST = 0
-_THUMB_TIP, _THUMB_IP = 4, 3
-_INDEX_TIP, _INDEX_PIP = 8, 6
-_MIDDLE_TIP, _MIDDLE_PIP = 12, 10
-_RING_TIP, _RING_PIP = 16, 14
-_PINKY_TIP, _PINKY_PIP = 20, 18
-_FINGERS_UP_MARGIN = 0.05
-
-
-def _fingers_point_up(landmarks) -> bool:
-    """True when four non-thumb fingertips sit clearly above the wrist."""
-    if len(landmarks) < 21:
-        return False
-    wrist_y = landmarks[_WRIST].y
-    tips = [
-        landmarks[_INDEX_TIP].y,
-        landmarks[_MIDDLE_TIP].y,
-        landmarks[_RING_TIP].y,
-        landmarks[_PINKY_TIP].y,
-    ]
-    return (wrist_y - sum(tips) / 4.0) > _FINGERS_UP_MARGIN
-
-
-def _all_fingers_extended(landmarks, handedness: str, flipped: bool) -> bool:
-    """Rule-based check: are all five fingers extended?"""
-    if len(landmarks) < 21:
-        return False
-    right_like = (handedness == "Right") ^ flipped
-    if right_like:
-        thumb_ok = landmarks[_THUMB_TIP].x < landmarks[_THUMB_IP].x
-    else:
-        thumb_ok = landmarks[_THUMB_TIP].x > landmarks[_THUMB_IP].x
-    if not thumb_ok:
-        return False
-    for tip, pip in (
-        (_INDEX_TIP, _INDEX_PIP),
-        (_MIDDLE_TIP, _MIDDLE_PIP),
-        (_RING_TIP, _RING_PIP),
-        (_PINKY_TIP, _PINKY_PIP),
-    ):
-        if landmarks[tip].y >= landmarks[pip].y:
-            return False
-    return True
-
-
-def compute_hand_flags(landmarks, handedness: str, flipped: bool) -> "HandFlags":
-    """Build HandFlags from raw MediaPipe landmarks for palms_down detection."""
-    if landmarks is None:
-        return HandFlags()
-    all5 = _all_fingers_extended(landmarks, handedness, flipped)
-    up = _fingers_point_up(landmarks)
-    return HandFlags(present=True, all5_extended=all5, fingers_up=up)
-
-
 # Motion labels
 MOTION_CHOP = "chop_motion"
 MOTION_STIR = "stir_motion"
-MOTION_HANDS_TOGETHER = "hands_together"
-MOTION_PALMS_DOWN = "palms_down"
-
-# Two-hand event thresholds (unchanged)
-_HANDS_TOGETHER_DIST = 0.12
-_HANDS_TOGETHER_FRAMES = 8
-_PALMS_DOWN_FRAMES = 6
-_COOLDOWN_S = 0.3
 
 # ---------------------------------------------------------------------------
 #  Sliding-window oscillation parameters (from gshan branch)
@@ -123,15 +56,6 @@ _STILL_SPEED_MAX = 0.006
 
 # Still detection: consecutive still frames before buffer reset
 _STILL_RESET_FRAMES = 10
-
-
-@dataclass
-class HandFlags:
-    """Per-hand snapshot used to gate motion detection."""
-
-    present: bool = False       # hand is currently tracked
-    all5_extended: bool = False  # all five fingers detected as extended
-    fingers_up: bool = False     # fingertips clearly above wrist
 
 
 @dataclass
@@ -232,16 +156,10 @@ class _HandMotionState:
 
 
 class MotionDetector:
-    """Detect chop/stir per hand, plus hands_together and palms_down events.
-
-    Chop and stir are detected via sliding-window oscillation counting on
-    wrist x/y coordinates from hand landmarks (no Pose dependency).
+    """Detect chop/stir per hand via wrist oscillation counting.
 
     * **chop** — y-axis oscillation (up-down wrist movement)
     * **stir** — x-axis oscillation (left-right wrist movement)
-
-    ``hand_flags`` lets the detector recognise palms_down (both hands have
-    all five fingers extended but are NOT pointing up).
     """
 
     def __init__(self) -> None:
@@ -249,11 +167,6 @@ class MotionDetector:
             "left": _HandMotionState(),
             "right": _HandMotionState(),
         }
-        self._together_streak = 0
-        self._last_together_t = 0.0
-        self._palms_down_streak = 0
-        self._last_palms_down_t = 0.0
-        # Debug info populated every update(), keyed by "left"/"right".
         self.debug: Dict[str, MotionDebug] = {
             "left": MotionDebug(),
             "right": MotionDebug(),
@@ -261,22 +174,18 @@ class MotionDetector:
 
     def update(
         self,
-        hand_flags: Dict[str, HandFlags],
         hand_wrists: Optional[Dict[str, Optional[Tuple[float, float]]]] = None,
         now: Optional[float] = None,
     ) -> Dict[str, Tuple[Optional[str], float, int]]:
-        """Feed per-hand flag snapshot + hand wrist positions.
+        """Feed per-hand wrist positions and detect chop/stir.
 
         Args:
-            hand_flags: Per-hand flags for palms_down detection.
-            hand_wrists: Per-hand wrist (x, y) from hand landmarks. Used for
-                chop/stir oscillation and hands_together distance.
+            hand_wrists: Per-hand wrist (x, y) from hand landmarks.
                 Keys: "left", "right".
 
         Returns:
             mapping {"left": (label_or_None, confidence, count),
-                     "right": (...),
-                     "both": (two_hand_event_or_None, conf, 0)}
+                     "right": (...)}
             count = new motion strokes this frame (0, 1, or rarely 2+).
         """
         if now is None:
@@ -288,7 +197,6 @@ class MotionDetector:
         results: Dict[str, Tuple[Optional[str], float, int]] = {
             "left": (None, 0.0, 0),
             "right": (None, 0.0, 0),
-            "both": (None, 0.0, 0),
         }
 
         # --- per-hand chop/stir detection via oscillation counting ---
@@ -412,49 +320,5 @@ class MotionDetector:
                 conf = min(1.0, max(r_y_amp, r_x_amp) / _OSCILLATION_AMP)
                 count = active_chop_delta + active_stir_delta
                 results[hand] = (output, conf, count)
-
-        # --- two-hand events --------------------------------------------------
-        lw = hand_wrists.get("left")
-        rw = hand_wrists.get("right")
-        together_fired = False
-        if lw is not None and rw is not None:
-            dx = lw[0] - rw[0]
-            dy = lw[1] - rw[1]
-            dist = math.sqrt(dx * dx + dy * dy)
-            if dist < _HANDS_TOGETHER_DIST:
-                self._together_streak += 1
-            else:
-                self._together_streak = 0
-            if (
-                self._together_streak >= _HANDS_TOGETHER_FRAMES
-                and (now - self._last_together_t) >= _COOLDOWN_S
-            ):
-                self._last_together_t = now
-                conf = min(1.0, 1.0 - dist / _HANDS_TOGETHER_DIST)
-                results["both"] = (MOTION_HANDS_TOGETHER, conf, 0)
-                together_fired = True
-        else:
-            self._together_streak = 0
-
-        # palms_down (놓기)
-        left_f = hand_flags.get("left", HandFlags())
-        right_f = hand_flags.get("right", HandFlags())
-        palms_down_now = (
-            left_f.present and right_f.present
-            and left_f.all5_extended and right_f.all5_extended
-            and (not left_f.fingers_up) and (not right_f.fingers_up)
-        )
-        if palms_down_now:
-            self._palms_down_streak += 1
-        else:
-            self._palms_down_streak = 0
-
-        if (
-            not together_fired
-            and self._palms_down_streak >= _PALMS_DOWN_FRAMES
-            and (now - self._last_palms_down_t) >= _COOLDOWN_S
-        ):
-            self._last_palms_down_t = now
-            results["both"] = (MOTION_PALMS_DOWN, 1.0, 0)
 
         return results

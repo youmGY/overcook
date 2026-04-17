@@ -106,8 +106,8 @@ from utils import bar
 import entities
 from entities import Station, Player, Order
 
-import game as game_module
-from game import Game, GameInput
+import main as game_module
+from main import Game, GameInput
 
 
 # ════════════════════════════════════════════════════════════════════════════

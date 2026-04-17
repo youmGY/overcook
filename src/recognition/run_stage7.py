@@ -66,8 +66,6 @@ def main() -> None:
     MOTION_TO_KOREAN = {
         "chop_motion": "CHOP",
         "stir_motion": "STIR",
-        "hands_together": "PICK UP",   # 집기
-        "palms_down": "DROP",          # 놓기
         "thumbs_up": "COMPLETE!",      # 완성
     }
 
@@ -115,7 +113,7 @@ def main() -> None:
             # Global event flash
             now = perf_counter()
             for hi in inputs:
-                if hi.motion in ("hands_together", "palms_down", "thumbs_up"):
+                if hi.motion == "thumbs_up":
                     flash_text = MOTION_TO_KOREAN.get(hi.motion, hi.motion)
                     flash_until = now + 0.6
                     break
