@@ -63,7 +63,7 @@ def _get_completed_food_img(holding, w, h):
 
     dish_name = holding.get("dish_name") or _dish_name_from_contents(holding.get("contents", []))
     if not dish_name:
-        return None
+        return _load_completed_food_img("unknown_dish.png", w, h)
     return _load_completed_food_img(f"{dish_name}.png", w, h)
 
 
