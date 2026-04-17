@@ -233,7 +233,6 @@ class _HandMotionState:
     chop_half_remainder: int = 0
     stir_half_remainder: int = 0
 
-
 class MotionDetector:
     """Detect chop/stir per hand, plus hands_together and palms_down events.
 
@@ -343,7 +342,10 @@ class MotionDetector:
             x_amp = float(wx_arr.max() - wx_arr.min()) if len(wx_arr) > 0 else 0.0
             chop_osc = _count_oscillations(wy_arr, _OSCILLATION_AMP)
             stir_osc = _count_oscillations(wx_arr, _OSCILLATION_AMP)
-
+            # Remainder of half-strokes not yet forming a full round-trip
+            chop_half_remainder: int = 0
+            stir_half_remainder: int = 0
+            
             # Recent-frames amplitude gate
             recent_n = min(len(wy_arr), _RECENT_FRAMES)
             if recent_n > 0:

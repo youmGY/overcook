@@ -9,7 +9,7 @@ _LM_WRIST = 0
 
 import numpy as np
 
-from .camera import CameraConfig, open_camera
+from .camera import CameraConfig, ThreadedCamera, open_camera
 from .gesture import (
     LABEL_THUMBS_UP,
     LABEL_UNKNOWN,
@@ -60,7 +60,7 @@ class RecognitionPipeline:
         self.hand_cfg = hand_cfg or HandTrackerConfig()
         self.flip = flip
 
-        self._cap = open_camera(self.camera_cfg)
+        self._cap = ThreadedCamera(open_camera(self.camera_cfg))
         self._hands = HandTracker(self.hand_cfg)
         self._splitter = HandSplitter()
         self._motion = MotionDetector()

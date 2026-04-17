@@ -25,7 +25,7 @@ from engine import screen, clock, FPS, F, get_img
 from constants import C, INGS, ING_KEYS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
 from utils import rr, txt, bar
 from ui import Popup, Btn, RecipeOverlay, IngredientOverlay
-from entities import Station, Player, Order
+from entities import Station, Player, Order, _load_completed_food_img
 
 # ── logger ────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -201,6 +201,8 @@ class Game:
         self.overlay.active = False
         self.overlay.rebuild()
         self.recipe_overlay.active = False
+        self._lock_mode = None
+        self._lock_station = None
 
     def _gy(self):
         _, gh = screen.get_size()
@@ -434,6 +436,8 @@ class Game:
                 st.chop_hits = 0
                 st.chopping = False
                 self._pop(st.cx(), st.y - 14, "Placed on board", C["lime"])
+            self._lock_mode = "chop"
+            self._lock_station = st
             return
 
         if st.chop_item and st.chop_item.get("chopped"):
@@ -470,6 +474,8 @@ class Game:
                 st.pot_cooking = True
                 st.pot_stirs = 0
                 st.pot_prog = 0.0
+                self._lock_mode = "stir"
+                self._lock_station = st
             st.pot_stirs += 1
             if st.pot_stirs >= STIR_ACTIONS + 3:
                 st.pot_cooking = False
@@ -622,6 +628,12 @@ class Game:
         self.orders.append(Order(random.choice(RECIPES)))
 
     def _hint(self):
+        if self._lock_mode == "chop" and self._lock_station:
+            st = self._lock_station
+            return f"Chopping! Press Chop ({st.chop_hits}/{CHOP_ACTIONS})"
+        if self._lock_mode == "stir" and self._lock_station:
+            st = self._lock_station
+            return f"Stirring! Press Stir ({st.pot_stirs}/{STIR_ACTIONS})"
         if self.overlay.active: return "Click an ingredient card  |  ESC to cancel"
         st = self._near()
         if not st: return ""
@@ -667,13 +679,13 @@ class Game:
             self.overlay.rebuild()
 
         if self.state in ("title", "over"):
-            if self.btn_start.update(mpos, mpressed) or gi.confirm:
+            if self.btn_start.update(mpos, mpressed):
                 self.reset(); self.state = "play"
                 self._spawn_order(); self._spawn_order()
             return
 
         if self.state == "paused":
-            if self.btn_pause_continue.update(mpos, mpressed) or gi.confirm: self.state = "play"
+            if self.btn_pause_continue.update(mpos, mpressed): self.state = "play"
             if self.btn_pause_restart.update(mpos, mpressed):
                 self.reset(); self.state = "play"
                 self._spawn_order(); self._spawn_order()
@@ -697,52 +709,75 @@ class Game:
 
         if self.recipe_overlay.active: return
 
-        move_to_slot = gi.move_to_slot
-        clicked_station = self._station_at_point(gi.station_click)
-        if clicked_station:
-            self.player.x = float(clicked_station.cx() - Player.PW // 2)
-            self.player.y = float(self._gy() - Player.PH)
-            self.player.vy = 0.0
-
-        act_flags = {
-            "confirm":  gi.confirm  or gi.action,
-            "chop":     gi.chop,
-            "stir":     gi.stir,
-            "pause":    False,
-        }
-
-        for btn in self.btn_acts:
-            key = next(k for k, v in self.btn_acts_map.items() if v is btn)
-            if btn.update(mpos, mpressed):
-                act_flags[key] = True
-
-        if act_flags["pause"]:
-            self.state = "paused"
-            return
-
-        move_dir = gi.move_dir
-        if move_to_slot is not None:
-            target = self._station_for_slot(move_to_slot)
-            if target:
-                self.player.x = float(target.cx() - Player.PW // 2)
+        if self._lock_mode:
+            # Position locked — only the relevant action is allowed
+            act_flags = {"confirm": False, "chop": gi.chop, "stir": gi.stir, "pause": False}
+            for btn in self.btn_acts:
+                key = next(k for k, v in self.btn_acts_map.items() if v is btn)
+                if btn.update(mpos, mpressed):
+                    act_flags[key] = True
+            if act_flags["pause"]:
+                self.state = "paused"
+                return
+            st = self._lock_station
+            if self._lock_mode == "chop" and act_flags["chop"] and st:
+                self._act_chop(st, chop_action=True)
+            elif self._lock_mode == "stir" and act_flags["stir"] and st:
+                self._act_pot(st, stir_only=True)
+            # Unlock when done
+            if self._lock_mode == "chop" and st and st.chop_item and st.chop_item.get("chopped"):
+                self._lock_mode = None
+                self._lock_station = None
+            elif self._lock_mode == "stir" and st and (st.pot_cooked or st.pot_burned):
+                self._lock_mode = None
+                self._lock_station = None
+        else:
+            move_to_slot = gi.move_to_slot
+            clicked_station = self._station_at_point(gi.station_click)
+            if clicked_station:
+                self.player.x = float(clicked_station.cx() - Player.PW // 2)
                 self.player.y = float(self._gy() - Player.PH)
                 self.player.vy = 0.0
 
-        self.player.update(move_dir, dt, gw, self._gy())
+            act_flags = {
+                "confirm":  gi.confirm  or gi.action,
+                "chop":     gi.chop,
+                "stir":     gi.stir,
+                "pause":    False,
+            }
 
-        handled = False
-        if act_flags["chop"]:
-            st = self._near()
-            if st and st.kind == "chop":
-                self._act_chop(st, chop_action=True)
-                handled = True
-        if act_flags["stir"] and not handled:
-            st = self._near()
-            if st and st.kind == "pot":
-                self._act_pot(st, stir_only=True)
-                handled = True
-        if act_flags["confirm"] and not handled:
-            self.do_action()
+            for btn in self.btn_acts:
+                key = next(k for k, v in self.btn_acts_map.items() if v is btn)
+                if btn.update(mpos, mpressed):
+                    act_flags[key] = True
+
+            if act_flags["pause"]:
+                self.state = "paused"
+                return
+
+            move_dir = gi.move_dir
+            if move_to_slot is not None:
+                target = self._station_for_slot(move_to_slot)
+                if target:
+                    self.player.x = float(target.cx() - Player.PW // 2)
+                    self.player.y = float(self._gy() - Player.PH)
+                    self.player.vy = 0.0
+
+            self.player.update(move_dir, dt, gw, self._gy())
+
+            handled = False
+            if act_flags["chop"]:
+                st = self._near()
+                if st and st.kind == "chop":
+                    self._act_chop(st, chop_action=True)
+                    handled = True
+            if act_flags["stir"] and not handled:
+                st = self._near()
+                if st and st.kind == "pot":
+                    self._act_pot(st, stir_only=True)
+                    handled = True
+            if act_flags["confirm"] and not handled:
+                self.do_action()
 
         for s in self.stations:
             events = s.update(dt)
@@ -856,33 +891,52 @@ class Game:
             pygame.draw.rect(screen, (55, 48, 115), (cx_, cy_, card_w, card_h), 1, border_radius=6)
 
             inner_y = cy_ + 4
+
+            # Completed dish thumbnail next to recipe name
             name_s = F[14].render(rec["name"], True, C["white"])
-            if name_s.get_width() > card_w - 6:
+            if name_s.get_width() > card_w - 40:
                 name_s = F[12].render(rec["name"], True, C["white"])
-            screen.blit(name_s, (cx_ + 4, inner_y))
+            text_h = name_s.get_height()
+
+            dish_thumb = _load_completed_food_img(f"{rec['name']}.png", 32, 32)
+            thumb_offset = 0
+            if dish_thumb:
+                # Crop transparent padding from the thumbnail for tighter fit
+                mask = pygame.mask.from_surface(dish_thumb)
+                brect = mask.get_bounding_rects()
+                if brect:
+                    cr = brect[0]
+                    for r2 in brect[1:]:
+                        cr.union_ip(r2)
+                    dish_thumb = dish_thumb.subsurface(cr)
+                th = dish_thumb.get_height()
+                tw = dish_thumb.get_width()
+                # Vertically center thumb with text
+                thumb_y = inner_y + text_h // 2 - th // 2
+                screen.blit(dish_thumb, (cx_ + 4, thumb_y))
+                thumb_offset = tw + 4
+
+            screen.blit(name_s, (cx_ + 4 + thumb_offset, inner_y))
 
             pts_s = F[12].render(f"+{rec['pts']}", True, C["gold"])
             screen.blit(pts_s, (cx_ + card_w - pts_s.get_width() - 4, inner_y))
-            inner_y += name_s.get_height() + 2
+            inner_y += max(name_s.get_height(), 20) + 2
 
             dot_x = cx_ + 4
+            ing_size = 20
             for j, need in enumerate(rec["needs"]):
-                r_dot = 5
-                dy = inner_y + r_dot
-                if dot_x + r_dot * 2 + 2 > cx_ + card_w - 4:
+                if dot_x + ing_size + 2 > cx_ + card_w - 4:
                     break
-                
-                img = get_img(need, 10, 10)
+                base = need.replace("_c", "")
+                img = get_img(base, ing_size, ing_size)
                 if img:
-                    screen.blit(img, (dot_x, dy - 5))
+                    screen.blit(img, (dot_x, inner_y))
                 else:
-                    base = need.replace("_c", "")
                     ing  = INGS.get(base, {})
                     col_dot = ing.get("color", (150, 150, 150))
-                    pygame.draw.circle(screen, col_dot, (dot_x + r_dot, dy), r_dot)
-                
-                dot_x += r_dot * 2 + 6
-            inner_y += 14
+                    pygame.draw.circle(screen, col_dot, (dot_x + ing_size // 2, inner_y + ing_size // 2), ing_size // 2)
+                dot_x += ing_size + 6
+            inner_y += ing_size + 4
 
             for idx, step in enumerate(rec.get("steps", [])):
                 step_txt = f"{idx + 1}. {step}"
@@ -914,7 +968,7 @@ class Game:
         screen.blit(tm, (gw // 2 - tm.get_width() // 2, HH // 2 - tm.get_height() // 2))
 
         ox = gw - 8
-        for o in reversed([o for o in self.orders if o.status != "done"]):
+        for o in reversed([o for o in self.orders if o.status == "active"]):
             ox -= 84
             o.draw(screen, ox, 2, w=82)
 

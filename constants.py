@@ -52,7 +52,7 @@ RECIPES = [
     {"name": "Mushroom Stir-fry", "pts": 90, "needs": ["mushroom_c","onion_c"], "cook": True,
      "steps": ["CHOP Mushroom & Onion", "Add to Stove & Quick Cook"]},
     {"name": "Veg Curry", "pts": 150, "needs": ["carrot_c","onion_c","rice"], "cook": True,
-     "steps": ["CHOP Carrot & Onion, Get Rice", "Add all to Stove & Simmer"]},
+     "steps": ["CHOP Carrot & Onion","Get Rice", "Add all to Stove & Simmer"]},
     {"name": "Carrot Soup", "pts": 80, "needs": ["carrot_c"], "cook": True,
      "steps": ["CHOP Carrot", "Add to Stove & Cook"]},
     # {"name": "Rice Bowl", "pts": 95, "needs": ["rice","mushroom_c"], "cook": True,
