@@ -26,6 +26,7 @@ class PoseTrackerConfig:
 class Joint:
     x: float  # normalized 0~1
     y: float
+    z: float  # relative depth from MediaPipe
     visibility: float
 
 
@@ -84,7 +85,8 @@ class PoseTracker:
             vis = lm.visibility if hasattr(lm, "visibility") and lm.visibility is not None else 1.0
             if vis < self.config.min_detection_confidence:
                 continue
-            joints[name] = Joint(x=lm.x, y=lm.y, visibility=vis)
+            z = lm.z if hasattr(lm, "z") and lm.z is not None else 0.0
+            joints[name] = Joint(x=lm.x, y=lm.y, z=z, visibility=vis)
         return joints
 
     def draw(self, frame_bgr, joints: Dict[str, Joint]) -> None:

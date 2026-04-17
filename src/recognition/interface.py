@@ -16,7 +16,7 @@ from .gesture import (
 )
 from .hand_split import HandSplitter
 from .hand_tracker import HandTracker, HandTrackerConfig
-from .motion import MotionDetector, compute_hand_flags
+from .motion import MotionDebug, MotionDetector, compute_hand_flags
 from .pose_tracker import PoseTracker, PoseTrackerConfig
 
 
@@ -78,6 +78,10 @@ class RecognitionPipeline:
     @property
     def fps(self) -> float:
         return self._hands.fps
+
+    @property
+    def motion_debug(self) -> Dict[str, MotionDebug]:
+        return self._motion.debug
 
     def _mp_handedness_label(self, hand_id: str) -> str:
         """Map splitter's viewer-perspective hand_id to MediaPipe subject label."""

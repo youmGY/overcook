@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import os
 from time import perf_counter
 
 import cv2
@@ -17,6 +19,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", type=int, default=0)
     p.add_argument("--low-res", action="store_true")
     p.add_argument("--flip", action="store_true", help="Selfie-style mirror")
+    p.add_argument("--log", type=str, default=None,
+                   help="Path to CSV log file for motion debug (e.g. motion_log.csv)")
     return p.parse_args()
 
 
@@ -30,7 +34,22 @@ def main() -> None:
         flip=args.flip,
     )
 
+    # CSV logger setup
+    log_file = None
+    log_writer = None
+    if args.log:
+        log_file = open(args.log, "w", newline="", encoding="utf-8")
+        log_writer = csv.writer(log_file)
+        log_writer.writerow([
+            "time", "hand", "gesture", "gesture_confirmed", "motion_event",
+            "v_par", "v_perp", "ratio",
+            "chop_rev", "chop_spd", "chop_amp",
+            "stir_rev", "stir_spd", "stir_amp",
+        ])
+        print(f"[Stage7] Logging motion debug to: {os.path.abspath(args.log)}")
+
     print("[Stage7] Started. Press 'q' to quit.")
+    t0 = perf_counter()
     flash_text = ""
     flash_until = 0.0
 
@@ -96,6 +115,57 @@ def main() -> None:
                     cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 165, 255), 3, cv2.LINE_AA,
                 )
 
+            # CSV logging
+            if log_writer:
+                elapsed = perf_counter() - t0
+                dbg_log = pipe.motion_debug
+                for hi in inputs:
+                    d = dbg_log[hi.hand_id]
+                    log_writer.writerow([
+                        f"{elapsed:.3f}", hi.hand_id, hi.gesture,
+                        hi.gesture_confirmed, hi.motion or "",
+                        f"{d.v_par:.4f}", f"{d.v_perp:.4f}",
+                        f"{d.ratio_par_over_perp:.2f}",
+                        d.rev_par, f"{d.speed_par:.4f}", f"{d.amp_par:.4f}",
+                        d.rev_perp, f"{d.speed_perp:.4f}", f"{d.amp_perp:.4f}",
+                    ])
+
+            # Motion debug overlay (v_par/v_perp ratio + window stats)
+            dbg = pipe.motion_debug
+            dbg_y = fh - 10
+            for hand in ("right", "left"):
+                d = dbg[hand]
+                # Line 1: instantaneous speeds and ratio
+                r_txt = f"{d.ratio_par_over_perp:5.1f}" if d.ratio_par_over_perp < 999 else "  inf"
+                line1 = f"{hand[0].upper()} v_par={d.v_par:.2f} v_perp={d.v_perp:.2f} ratio={r_txt}"
+                # Line 2: window stats (chop candidate / stir candidate)
+                line2 = (
+                    f"  CHOP rev={d.rev_par} spd={d.speed_par:.2f} amp={d.amp_par:.3f}"
+                    f" | STIR rev={d.rev_perp} spd={d.speed_perp:.2f} amp={d.amp_perp:.3f}"
+                )
+                for txt in (line2, line1):
+                    cv2.putText(
+                        frame, txt, (10, dbg_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 3, cv2.LINE_AA,
+                    )
+                    cv2.putText(
+                        frame, txt, (10, dbg_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1, cv2.LINE_AA,
+                    )
+                    dbg_y -= 16
+                dbg_y -= 4  # gap between hands
+
+            # Threshold reference line
+            thr_txt = f"[Thresholds] R_MIN=2.0  N_min={3}  V_min={0.35}  A_min={0.04}"
+            cv2.putText(
+                frame, thr_txt, (10, dbg_y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 3, cv2.LINE_AA,
+            )
+            cv2.putText(
+                frame, thr_txt, (10, dbg_y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (100, 200, 255), 1, cv2.LINE_AA,
+            )
+
             # FPS
             fps_text = f"FPS: {pipe.fps:5.1f}"
             cv2.putText(
@@ -113,6 +183,9 @@ def main() -> None:
     finally:
         pipe.close()
         cv2.destroyAllWindows()
+        if log_file:
+            log_file.close()
+            print(f"[Stage7] Log saved: {os.path.abspath(args.log)}")
         print("[Stage7] Closed.")
 
 

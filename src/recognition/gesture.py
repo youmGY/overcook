@@ -23,6 +23,7 @@ LABEL_FINGER_3 = "finger_3"
 LABEL_FINGER_4 = "finger_4"
 LABEL_FINGER_5 = "finger_5"
 LABEL_THUMBS_UP = "thumbs_up"
+LABEL_FIST = "fist"
 LABEL_UNKNOWN = "unknown"
 
 _DNN_LABELS = [
@@ -32,6 +33,7 @@ _DNN_LABELS = [
     LABEL_FINGER_4,
     LABEL_FINGER_5,
     LABEL_THUMBS_UP,
+    LABEL_FIST,
 ]
 
 _LABEL_TO_COUNT = {
@@ -41,10 +43,11 @@ _LABEL_TO_COUNT = {
     LABEL_FINGER_4: 4,
     LABEL_FINGER_5: 5,
     LABEL_THUMBS_UP: 1,
+    LABEL_FIST: 0,
     LABEL_UNKNOWN: 0,
 }
 
-_DEFAULT_ONNX = os.path.join(os.path.dirname(__file__), "gesture_mlp_merged.onnx")
+_DEFAULT_ONNX = os.path.join(os.path.dirname(__file__), "gesture_mlp.onnx")
 
 # ---- feature extraction (matches training pipeline) ----
 
