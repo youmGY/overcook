@@ -667,13 +667,13 @@ class Game:
             self.overlay.rebuild()
 
         if self.state in ("title", "over"):
-            if self.btn_start.update(mpos, mpressed):
+            if self.btn_start.update(mpos, mpressed) or gi.confirm:
                 self.reset(); self.state = "play"
                 self._spawn_order(); self._spawn_order()
             return
 
         if self.state == "paused":
-            if self.btn_pause_continue.update(mpos, mpressed): self.state = "play"
+            if self.btn_pause_continue.update(mpos, mpressed) or gi.confirm: self.state = "play"
             if self.btn_pause_restart.update(mpos, mpressed):
                 self.reset(); self.state = "play"
                 self._spawn_order(); self._spawn_order()
