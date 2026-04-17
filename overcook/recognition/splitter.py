@@ -9,7 +9,7 @@ from .smoothing import EMASmoother, PALM_LANDMARK_INDEX
 from .gesture import GestureDebouncer
 
 # How long (seconds) to keep emitting a stale state for a missing hand.
-_STALE_KEEP_S = 0.5
+_STALE_KEEP_S = 0.8
 # If a new detection of opposite handedness lands closer to our last position
 # than this (normalized), treat it as an ID swap and retain previous assignment.
 _SWAP_DIST = 0.15

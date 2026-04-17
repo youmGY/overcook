@@ -27,8 +27,8 @@ _HAND_CONNECTIONS = [
 @dataclass(frozen=True)
 class HandTrackerConfig:
     max_num_hands: int = 2
-    min_detection_confidence: float = 0.7
-    min_tracking_confidence: float = 0.6
+    min_detection_confidence: float = 0.2
+    min_tracking_confidence: float = 0.2
     model_complexity: int = 0  # kept for compatibility, not used by tasks API
     model_path: str = _DEFAULT_MODEL
 
@@ -41,6 +41,7 @@ class HandTracker:
         )
         options = vision.HandLandmarkerOptions(
             base_options=base_options,
+            running_mode=vision.RunningMode.VIDEO,
             num_hands=self.config.max_num_hands,
             min_hand_detection_confidence=self.config.min_detection_confidence,
             min_tracking_confidence=self.config.min_tracking_confidence,
@@ -48,6 +49,7 @@ class HandTracker:
         self._detector = vision.HandLandmarker.create_from_options(options)
 
         self._prev_ts = perf_counter()
+        self._frame_ts_ms = 0
         self._fps = 0.0
 
     @property
@@ -66,7 +68,8 @@ class HandTracker:
         """
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        result = self._detector.detect(mp_image)
+        self._frame_ts_ms += 33  # ~30fps monotonic timestamp
+        result = self._detector.detect_for_video(mp_image, self._frame_ts_ms)
 
         if draw and result.hand_landmarks:
             h, w = frame_bgr.shape[:2]

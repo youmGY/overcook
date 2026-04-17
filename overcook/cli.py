@@ -229,14 +229,20 @@ def main() -> None:
 
     log.info("Game started (ui_mode=%s, gesture=%s)", ui_mode, args.gesture)
 
-    while True:
-        dt = min(clock.tick(FPS) / 1000.0, MAX_DT)
+    try:
+        while True:
+            dt = min(clock.tick(FPS) / 1000.0, MAX_DT)
 
-        gesture_gi, pipeline_frame = _process_gesture(game)
-        actions, mpressed = _handle_events(game, held)
-        keyboard_gi = _build_keyboard_input(held, actions)
-        gi = merge_inputs(keyboard_gi, gesture_gi)
+            gesture_gi, pipeline_frame = _process_gesture(game)
+            actions, mpressed = _handle_events(game, held)
+            keyboard_gi = _build_keyboard_input(held, actions)
+            gi = merge_inputs(keyboard_gi, gesture_gi)
 
-        mpos = pygame.mouse.get_pos()
-        game.update(dt, gi, mpos, mpressed)
-        _draw_frame(game, pipeline_frame)
+            mpos = pygame.mouse.get_pos()
+            game.update(dt, gi, mpos, mpressed)
+            _draw_frame(game, pipeline_frame)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        game.shutdown()
+        pygame.quit()

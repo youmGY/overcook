@@ -630,7 +630,7 @@ class Game:
         if self.recipe_overlay.active: return
 
         if self._lock_mode:
-            act_flags = {"confirm": False, "chop": gi.chop, "stir": gi.stir, "pause": False}
+            act_flags = {"confirm": gi.confirm or gi.action, "chop": gi.chop, "stir": gi.stir, "pause": False}
             for btn in self.btn_acts:
                 key = next(k for k, v in self.btn_acts_map.items() if v is btn)
                 if btn.update(mpos, mpressed):
@@ -643,12 +643,21 @@ class Game:
                 self._act_chop(st, chop_action=True)
             elif self._lock_mode == "stir" and act_flags["stir"] and st:
                 self._act_pot(st, stir_only=True)
+            # Unlock when done
             if self._lock_mode == "chop" and st and st.chop_item and st.chop_item.get("chopped"):
                 self._lock_mode = None
                 self._lock_station = None
             elif self._lock_mode == "stir" and st and (st.pot_cooked or st.pot_burned):
                 self._lock_mode = None
                 self._lock_station = None
+            # Also allow confirm to break out of lock (pick up finished item or cancel)
+            elif act_flags["confirm"]:
+                self._lock_mode = None
+                self._lock_station = None
+                if st:
+                    self.player.x = float(st.cx() - Player.PW // 2)
+                    self.player.y = float(self._gy() - Player.PH)
+                    self.do_action()
         else:
             move_to_slot = gi.move_to_slot
             clicked_station = self._station_at_point(gi.station_click)

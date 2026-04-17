@@ -4,9 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-# Hand landmark index for wrist
-_LM_WRIST = 0
-
 import numpy as np
 
 from .camera import CameraConfig, ThreadedCamera, open_camera
@@ -94,11 +91,11 @@ class RecognitionPipeline:
             confirmed = per_hand_confirmed[hand_id]
             per_motion, per_conf, per_count = motion_results.get(hand_id, (None, 0.0, 0))
 
-            # Promote thumbs_up gesture → motion field on confirmation frame
+            # When no active motion and gesture is thumbs_up → promote to motion field.
+            # No hold exists anymore, so motion is None the instant the user stops moving.
             if per_motion is None and label == LABEL_THUMBS_UP and confirmed:
                 per_motion = LABEL_THUMBS_UP
                 per_conf = 1.0
-                per_count = 0
 
             outputs.append(
                 HandInput(
@@ -150,13 +147,19 @@ class RecognitionPipeline:
             per_hand_count[hand_id] = count
             per_hand_confirmed[hand_id] = just_confirmed
 
-        # Extract wrist positions for chop/stir detection
+        # Extract hand centroid for chop/stir detection.
+        # Using the mean of ALL 21 landmarks — robust to any hand orientation.
+        # When only fingers or hand-edge are visible, specific landmarks
+        # (wrist/MCP) overlap and become unstable; the full centroid stays stable.
         hand_wrists: Dict[str, Optional[Tuple[float, float]]] = {}
         for hand_id in ("left", "right"):
             state = hands[hand_id]
             if state.landmarks is not None:
-                wlm = state.landmarks[_LM_WRIST]
-                hand_wrists[hand_id] = (wlm.x, wlm.y)
+                xs = [lm.x for lm in state.landmarks]
+                ys = [lm.y for lm in state.landmarks]
+                cx = sum(xs) / len(xs)
+                cy = sum(ys) / len(ys)
+                hand_wrists[hand_id] = (cx, cy)
             else:
                 hand_wrists[hand_id] = None
 
