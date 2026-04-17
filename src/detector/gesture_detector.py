@@ -91,7 +91,7 @@ class GestureDetector:
     RECENT_FRAMES: int = 25  # ~0.83초 @ 30fps
 
     # 제스처 Hold: idle로 바뀌기 전 이전 제스처를 유지하는 프레임 수 (토글 방지)
-    HOLD_FRAMES: int = 8            # 8→3: idle 전환 응답 속도 개선
+    HOLD_FRAMES: int = 8            # 줄이면: idle 전환 응답 속도 빨라짐.
 
     # 화면 이탈 구간 gap filling 최대 프레임 수 (chop 화면 이탈 대응)
     HAND_CACHE_MAX: int = 4
@@ -102,7 +102,7 @@ class GestureDetector:
 
     # 정지 감지: 이 프레임 수 연속 정지 시 동적 버퍼 초기화 (잔류 감지 방지)
     # 6프레임 ≈ 0.2초 @ 30fps
-    STILL_RESET_FRAMES: int = 10      # 10→6: 멈추면 더 빠르게 idle로 복귀
+    STILL_RESET_FRAMES: int = 10      # 줄이면: 멈추면 더 빠르게 idle로 복귀
 
     def __init__(
         self,
