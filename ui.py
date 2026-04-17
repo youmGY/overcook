@@ -1,5 +1,5 @@
 import pygame
-from engine import F, screen
+from engine import F, screen, get_img
 from constants import C, INGS, ING_KEYS, RECIPES
 from utils import rr, txt, bar
 
@@ -99,10 +99,14 @@ class RecipeOverlay:
             ing_x = cx_ + 8
             ing_y = cy_ + 24
             for need in rec["needs"]:
-                base = need.replace("_c", "")
-                ing  = INGS.get(base, {})
-                dot_col = ing.get("color", (150, 150, 150))
-                pygame.draw.circle(surf, dot_col, (ing_x + 6, ing_y), 6)
+                img = get_img(need, 12, 12)
+                if img:
+                    surf.blit(img, (ing_x, ing_y - 6))
+                else:
+                    base = need.replace("_c", "")
+                    ing  = INGS.get(base, {})
+                    dot_col = ing.get("color", (150, 150, 150))
+                    pygame.draw.circle(surf, dot_col, (ing_x + 6, ing_y), 6)
                 ing_x += 18
 
             step_y = ing_y + 14
@@ -122,7 +126,7 @@ class RecipeOverlay:
             bs = F[12].render(badge_lbl, True, badge_col)
             surf.blit(bs, (cx_ + CARD_W - bs.get_width() - 8, cy_ + CARD_H - bs.get_height() - 3))
 
-        txt(surf, "colored dot = ingredient   * = needs chopping   Cook = use stove",
+        txt(surf, "colored dot/icon = ingredient   * = needs chopping   Cook = use stove",
             12, (130, 130, 170), px + PW // 2, py + PH - 20)
         txt(surf, "Press R to close", 12, (100, 100, 150), px + PW // 2, py + PH - 6)
 
@@ -168,7 +172,11 @@ class IngredientOverlay:
             pygame.draw.rect(surf, C["ov_border"] if hover else (60, 60, 100),
                              rect, 2, border_radius=10)
 
-            pygame.draw.circle(surf, ing["color"], (rect.centerx, rect.y + 32), 20)
+            img = get_img(key, 40, 40)
+            if img:
+                surf.blit(img, (rect.centerx - 20, rect.y + 12))
+            else:
+                pygame.draw.circle(surf, ing["color"], (rect.centerx, rect.y + 32), 20)
 
             if ing["can_chop"]:
                 badge = F[12].render("Choppable", True, (200, 200, 200))

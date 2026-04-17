@@ -93,6 +93,7 @@ import constants
 from constants import (
     C, INGS, ING_KEYS, RECIPES,
     BURN_TIME, COOK_TIME, CHOP_TIME, ORDER_TIME, GAME_TIME,
+    CHOP_ACTIONS, STIR_ACTIONS,
 )
 
 import engine
@@ -106,7 +107,7 @@ import entities
 from entities import Station, Player, Order
 
 import game as game_module
-from game import Game
+from game import Game, GameInput
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -218,23 +219,26 @@ class TestStationChop(unittest.TestCase):
     def test_progress_accumulates(self):
         st = self._make_chop()
         st.chop_item = self._make_item()
+        st.chop_hits = max(1, CHOP_ACTIONS // 2)
         st.chopping = True
-        st.update(CHOP_TIME / 2)
-        self.assertAlmostEqual(st.chop_prog, 0.5, places=5)
+        st.update(0.0)
+        self.assertAlmostEqual(st.chop_prog, st.chop_hits / CHOP_ACTIONS, places=5)
 
     def test_chop_done_event_emitted(self):
         st = self._make_chop()
         st.chop_item = self._make_item()
+        st.chop_hits = CHOP_ACTIONS
         st.chopping = True
-        events = st.update(CHOP_TIME)
+        events = st.update(0.0)
         self.assertIn("chop_done", events)
 
     def test_chop_item_mutated_on_done(self):
         st = self._make_chop()
         item = self._make_item("carrot")
         st.chop_item = item
+        st.chop_hits = CHOP_ACTIONS
         st.chopping = True
-        st.update(CHOP_TIME)
+        st.update(0.0)
         self.assertTrue(st.chop_item["chopped"])
         self.assertTrue(st.chop_item["id"].endswith("_c"))
         self.assertIn("Chopped", st.chop_item["label"])
@@ -246,15 +250,17 @@ class TestStationChop(unittest.TestCase):
         item["chopped"] = True
         item["id"] = "tomato_c"
         st.chop_item = item
+        st.chop_hits = CHOP_ACTIONS
         st.chopping = True
-        events = st.update(CHOP_TIME * 10)
+        events = st.update(0.0)
         self.assertNotIn("chop_done", events)
 
     def test_progress_clamped_at_one(self):
         st = self._make_chop()
         st.chop_item = self._make_item()
+        st.chop_hits = CHOP_ACTIONS * 10
         st.chopping = True
-        st.update(CHOP_TIME * 100)
+        st.update(0.0)
         self.assertEqual(st.chop_prog, 1.0)
 
     def test_zero_dt_no_progress(self):
@@ -284,15 +290,17 @@ class TestStationPot(unittest.TestCase):
     def test_cook_progress_accumulates(self):
         st = self._make_pot()
         st.pot_items = [self._item()]
+        st.pot_stirs = max(1, STIR_ACTIONS // 2)
         st.pot_cooking = True; st.pot_on = True
-        st.update(COOK_TIME / 2)
-        self.assertAlmostEqual(st.pot_prog, 0.5, places=5)
+        st.update(0.0)
+        self.assertAlmostEqual(st.pot_prog, st.pot_stirs / STIR_ACTIONS, places=5)
 
     def test_cook_done_event(self):
         st = self._make_pot()
         st.pot_items = [self._item()]
+        st.pot_stirs = STIR_ACTIONS
         st.pot_cooking = True; st.pot_on = True
-        events = st.update(COOK_TIME)
+        events = st.update(0.0)
         self.assertIn("cook_done", events)
         self.assertTrue(st.pot_cooked)
         self.assertFalse(st.pot_cooking)
@@ -323,16 +331,18 @@ class TestStationPot(unittest.TestCase):
     def test_cook_progress_clamped(self):
         st = self._make_pot()
         st.pot_items = [self._item()]
+        st.pot_stirs = STIR_ACTIONS * 10
         st.pot_cooking = True
-        st.update(COOK_TIME * 100)
+        st.update(0.0)
         self.assertEqual(st.pot_prog, 1.0)
 
     def test_no_cook_progress_after_cooked(self):
         """pot_prog should stay at 1.0 once cooked; no further events."""
         st = self._make_pot()
         st.pot_items = [self._item()]
+        st.pot_stirs = STIR_ACTIONS
         st.pot_cooking = True
-        st.update(COOK_TIME)          # cook_done
+        st.update(0.0)               # cook_done
         events = st.update(1.0)       # should not emit cook_done again
         self.assertNotIn("cook_done", events)
 
@@ -707,64 +717,7 @@ class TestDoActionPot(unittest.TestCase):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# Game.do_action — plate station
-# ════════════════════════════════════════════════════════════════════════════
-class TestDoActionPlate(unittest.TestCase):
-
-    def _setup(self):
-        engine.screen = _FakeSurface()
-        g = Game()
-        g.state = "play"
-        plate = next(s for s in g.stations if s.kind == "plate")
-        g.player.x = plate.cx() - Player.PW // 2
-        g.player.y = plate.cy() - Player.PH // 2 - 5
-        g.orders = []
-        return g, plate
-
-    def _cooked_dish(self, needs):
-        contents = [{"id": n, "chopped": n.endswith("_c")} for n in needs]
-        return {"id": "cooked", "label": "Cooked Dish", "contents": contents, "cooked": True}
-
-    def test_place_cooked_dish(self):
-        g, plate = self._setup()
-        dish = self._cooked_dish(["tomato_c", "onion_c"])
-        g.player.holding = dish
-        g.do_action()
-        self.assertIsNotNone(plate.plate_item)
-        self.assertIsNone(g.player.holding)
-
-    def test_plate_occupied_popup(self):
-        g, plate = self._setup()
-        plate.plate_item = self._cooked_dish(["tomato_c"])
-        g.player.holding = self._cooked_dish(["tomato_c"])
-        g.do_action()
-        self.assertTrue(any("occupied" in p.msg.lower() for p in g.popups))
-
-    def test_pickup_plated_dish(self):
-        g, plate = self._setup()
-        dish = self._cooked_dish(["tomato_c"])
-        plate.plate_item = dish
-        g.player.holding = None
-        g.do_action()
-        self.assertIsNotNone(g.player.holding)
-        self.assertIsNone(plate.plate_item)
-
-    def test_burned_item_discarded(self):
-        g, plate = self._setup()
-        g.player.holding = {"id": "cooked", "cooked": True, "burned": True, "contents": []}
-        g.do_action()
-        self.assertIsNone(g.player.holding)
-        self.assertTrue(any("burn" in p.msg.lower() for p in g.popups))
-
-    def test_raw_item_silently_blocked(self):
-        g, plate = self._setup()
-        g.player.holding = {"id": "tomato", "label": "Tomato", "chopped": False}
-        g.do_action()
-        self.assertIsNone(plate.plate_item)
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# Game.do_action — submit station
+# Game.do_action — submit station  (plate station removed: submit directly from hand)
 # ════════════════════════════════════════════════════════════════════════════
 class TestDoActionSubmit(unittest.TestCase):
 
@@ -773,60 +726,77 @@ class TestDoActionSubmit(unittest.TestCase):
         g = Game()
         g.state = "play"
         submit = next(s for s in g.stations if s.kind == "submit")
-        plate  = next(s for s in g.stations if s.kind == "plate")
         g.player.x = submit.cx() - Player.PW // 2
         g.player.y = submit.cy() - Player.PH // 2 - 5
         g.orders = []
-        return g, submit, plate
+        return g, submit
 
     def _cooked_dish(self, needs):
         contents = [{"id": n, "chopped": n.endswith("_c")} for n in needs]
         return {"id": "cooked", "label": "Cooked Dish", "contents": contents, "cooked": True}
 
     def test_submit_matched_order(self):
-        g, submit, plate = self._setup()
+        g, submit = self._setup()
         rec = next(r for r in RECIPES if r["name"] == "Tomato Soup")
         order = Order(rec); order.t = ORDER_TIME
         g.orders = [order]
-        plate.plate_item = self._cooked_dish(rec["needs"])
+        g.player.holding = self._cooked_dish(rec["needs"])
         initial_score = g.score
         g.do_action()
         self.assertEqual(order.status, "done")
-        self.assertIsNone(plate.plate_item)
+        self.assertIsNone(g.player.holding)
         self.assertGreater(g.score, initial_score)
 
     def test_submit_includes_time_bonus(self):
-        g, submit, plate = self._setup()
+        g, submit = self._setup()
         rec = next(r for r in RECIPES if r["name"] == "Tomato Soup")
         order = Order(rec); order.t = ORDER_TIME
         g.orders = [order]
-        plate.plate_item = self._cooked_dish(rec["needs"])
+        g.player.holding = self._cooked_dish(rec["needs"])
         g.do_action()
         self.assertEqual(g.score, rec["pts"] + 50)
 
-    def test_submit_no_match_clears_plate(self):
-        g, submit, plate = self._setup()
+    def test_submit_no_match_clears_holding(self):
+        g, submit = self._setup()
         g.orders = []
-        plate.plate_item = self._cooked_dish(["tomato_c", "onion_c"])
+        g.player.holding = self._cooked_dish(["tomato_c", "onion_c"])
         g.do_action()
-        self.assertIsNone(plate.plate_item)
+        self.assertIsNone(g.player.holding)
         self.assertTrue(any("No matching" in p.msg for p in g.popups))
 
-    def test_submit_nothing_plated_popup(self):
-        g, submit, plate = self._setup()
-        plate.plate_item = None
+    def test_submit_nothing_popup(self):
+        g, submit = self._setup()
+        g.player.holding = None
         g.do_action()
-        self.assertTrue(any("Nothing" in p.msg or "plated" in p.msg.lower() for p in g.popups))
+        self.assertTrue(any("Nothing" in p.msg or "submit" in p.msg.lower() for p in g.popups))
+
+    def test_submit_missing_ingredient_id_clears_holding(self):
+        g, submit = self._setup()
+        g.player.holding = {
+            "id": "cooked",
+            "label": "Cooked Dish",
+            "contents": [{"chopped": True}],
+            "cooked": True,
+        }
+        g.do_action()
+        self.assertIsNone(g.player.holding)
+        self.assertTrue(any("missing ingredient id" in p.msg.lower() for p in g.popups))
 
     def test_submit_matches_first_active_order(self):
-        g, submit, plate = self._setup()
+        g, submit = self._setup()
         rec = next(r for r in RECIPES if r["name"] == "Tomato Soup")
         o1 = Order(rec); o2 = Order(rec)
         g.orders = [o1, o2]
-        plate.plate_item = self._cooked_dish(rec["needs"])
+        g.player.holding = self._cooked_dish(rec["needs"])
         g.do_action()
         self.assertEqual(o1.status, "done")
         self.assertEqual(o2.status, "active")
+
+    def test_submit_burned_dish_rejected(self):
+        g, submit = self._setup()
+        g.player.holding = {"id": "cooked", "cooked": True, "burned": True, "contents": []}
+        g.do_action()
+        self.assertTrue(any("Nothing" in p.msg or "submit" in p.msg.lower() for p in g.popups))
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -895,7 +865,7 @@ class TestGameScoreAndTimer(unittest.TestCase):
 
     def _noop_update(self, dt):
         """Drive update without player/button input."""
-        self.g.update(dt, 0, False, (0, 0), False, None)
+        self.g.update(dt, GameInput(), (0, 0), False)
 
     def test_score_does_not_go_negative_on_fail(self):
         self.g.score = 10
@@ -947,19 +917,18 @@ class TestGameScoreAndTimer(unittest.TestCase):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# Veg Salad corner case (cook=False → unsubmittable)
+# Veg Salad corner case (cook=False → raw dish cannot be submitted)
 # ════════════════════════════════════════════════════════════════════════════
 class TestVegSaladUnsubmittable(unittest.TestCase):
 
-    def test_veg_salad_cannot_be_plated(self):
-        """Veg Salad has cook=False but plate station only accepts cooked items."""
+    def test_raw_dish_cannot_be_submitted(self):
+        """_find_submit_dish() requires cooked=True, so a raw dish is rejected."""
         engine.screen = _FakeSurface()
         g = Game()
         g.state = "play"
-        plate = next(s for s in g.stations if s.kind == "plate")
-        g.player.x = plate.cx() - Player.PW // 2
-        g.player.y = plate.cy() - Player.PH // 2 - 5
-
+        submit = next(s for s in g.stations if s.kind == "submit")
+        g.player.x = submit.cx() - Player.PW // 2
+        g.player.y = submit.cy() - Player.PH // 2 - 5
         raw_salad = {
             "id": "raw_salad",
             "label": "Raw Salad",
@@ -968,7 +937,7 @@ class TestVegSaladUnsubmittable(unittest.TestCase):
         }
         g.player.holding = raw_salad
         g.do_action()
-        self.assertIsNone(plate.plate_item)
+        self.assertTrue(any("Nothing" in p.msg or "submit" in p.msg.lower() for p in g.popups))
 
 
 if __name__ == "__main__":

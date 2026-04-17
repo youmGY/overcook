@@ -57,12 +57,14 @@ RECIPES = [
      "steps": ["CHOP Carrot", "Add to Stove & Cook"]},
     {"name": "Rice Bowl", "pts": 95, "needs": ["rice","mushroom_c"], "cook": True,
      "steps": ["Get Rice, CHOP Mushroom", "Add both to Stove & Cook"]},
-    {"name": "Veg Salad", "pts": 70, "needs": ["tomato_c","mushroom_c"], "cook": False,
-     "steps": ["CHOP Tomato & Mushroom", "Mix & Plate (NO COOK)"]},
+    # {"name": "Veg Salad", "pts": 70, "needs": ["tomato_c","mushroom_c"], "cook": False,
+    #  "steps": ["CHOP Tomato & Mushroom", "Mix & Plate (NO COOK)"]},  //not available right now
 ]
 
 BURN_TIME  = 8.0
 COOK_TIME  = 5.0
 CHOP_TIME  = 3.0
+CHOP_ACTIONS = 4
+STIR_ACTIONS = 5
 ORDER_TIME = 55.0
-GAME_TIME  = 120.0
+GAME_TIME  = 240.0

@@ -25,3 +25,29 @@ def _load_fonts():
 
 
 F = _load_fonts()
+
+
+IMG_CACHE = {}
+
+def get_img(ing_id, w, h):
+    """지정된 크기의 재료 이미지를 캐싱하여 반환합니다."""
+    key = (ing_id, w, h)
+    if key in IMG_CACHE:
+        return IMG_CACHE[key]
+
+    base_path = f"assets/ingredients/{ing_id}.png"
+    if not os.path.exists(base_path):
+        IMG_CACHE[key] = None
+        return None
+
+    try:
+        # 테스트 환경(test_game.py) 등에서 pygame.image 모듈이 없을 때를 대비
+        if not hasattr(pygame, "image"):
+            return None
+        img = pygame.image.load(base_path).convert_alpha()
+        img = pygame.transform.smoothscale(img, (w, h))
+        IMG_CACHE[key] = img
+        return img
+    except Exception:
+        IMG_CACHE[key] = None
+        return None

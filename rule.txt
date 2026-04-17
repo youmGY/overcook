@@ -1,0 +1,10 @@
+
+구분	위치 선택	진입 동작	내부 동작	완료 조건	완료 후
+메인 화면	finger_1~5				해당 위치로 이동
+Pantry (재료 선택)	finger_2	thumbs_up	finger_1~5로 재료 선택 → thumbs_up으로 확정	재료 선택 완료	재료를 손에 든 상태로 메인 복귀
+Chop (썰기)	finger_3	thumbs_up (재료 들고 있어야 함)			
+Chop (썰기)	finger_3	chop_motion으로 조리		N회 수행 or 게이지 100%	썰어진 재료 들기
+Stove (조리)	finger_4	thumbs_up(내려놓기)			
+Stove (조리)	finger_4	stir_motion으로 조리		N회 수행 or 게이지 100%	조리된 재료 들고 메인 복귀
+Trash (버리기)	finger_1	thumbs_up		즉시 수행	빈 손 상태 유지
+Submit (제출)	finger_5	thumbs_up		즉시 수행	점수/결과 화면
