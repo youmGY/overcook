@@ -35,19 +35,15 @@ DEBUG_MODE = "--debug" in sys.argv
 
 # ── 제스처별 색상 (BGR for cv2) ───────────────────────────────────────────────
 GESTURE_COLOR_BGR: dict[Gesture, tuple[int, int, int]] = {
-    Gesture.IDLE:    (120, 120, 120),
-    Gesture.GRAB:    (  0, 165, 255),
-    Gesture.RELEASE: (  0, 220,   0),
-    Gesture.CHOP:    (100,   0, 255),
-    Gesture.STIR:    (  0, 200, 255),
+    Gesture.IDLE: (120, 120, 120),
+    Gesture.CHOP: (100,   0, 255),
+    Gesture.STIR: (  0, 200, 255),
 }
 
 HINTS = [
-    "GRAB    : fist + bent arm, fist up",
-    "RELEASE : both hands open, palms down",
-    "CHOP    : vertical repeated motion",
-    "STIR    : horizontal repeated motion",
-    "v       : toggle landmark overlay",
+    "CHOP : vertical repeated motion",
+    "STIR : horizontal repeated motion",
+    "v    : toggle landmark overlay",
 ]
 
 
@@ -81,56 +77,15 @@ def frame_to_surface(frame: np.ndarray) -> pygame.Surface:
 # ── 디버그 출력 ───────────────────────────────────────────────────────────────
 
 def print_debug(dbg: dict, output: Gesture) -> None:
-    """
-    detector.debug_info 를 읽기 쉬운 형태로 콘솔에 출력한다.
-
-    출력 항목:
-      - 각 손의 손가락 TIP/MCP 거리 비율 (curl 판단 기준: < 1.5 = 말림)
-      - curled / extended 카운트
-      - y_std: 손 수평 여부 (release 판단 기준: < 0.10)
-      - elbow_angle: 팔꿈치 각도 (grab 판단: < 155°)
-      - thumb_ratio: 엄지 간격 비율 (release 판단: < 0.6)
-      - chop_osc / stir_osc: 방향 전환 횟수 (2 이상이면 동작 감지)
-      - y_amp / x_amp: 손목 운동 진폭
-      - raw → output: 필터 전/후 제스처
-    """
+    """detector.debug_info 를 읽기 쉬운 형태로 콘솔에 출력한다."""
     ts = time.strftime("%H:%M:%S")
-    lines = [f"[DEBUG {ts}]"]
-
-    for side in ("R", "L"):
-        h = dbg.get(side)
-        if h:
-            r = h["ratios"]
-            lines.append(
-                f"  {side}-hand  ratios idx={r['idx']} mid={r['mid']} "
-                f"rng={r['rng']} pnk={r['pnk']}  "
-                f"curled={h['curled']}/4  extended={h['extended']}/4  "
-                f"y_std={h['y_std']}  wrist=({h['wrist_xy'][0]},{h['wrist_xy'][1]})"
-            )
-            angle_key = f"elbow_angle_{side}"
-            above_key = f"wrist_above_elbow_{side}"
-            if angle_key in dbg:
-                lines.append(
-                    f"  {side}-pose   elbow_angle={dbg[angle_key]}°  "
-                    f"wrist_above_elbow={dbg.get(above_key)}"
-                )
-        else:
-            lines.append(f"  {side}-hand  (not detected)")
-
-    if dbg.get("thumb_ratio") is not None:
-        lines.append(f"  thumb_ratio={dbg['thumb_ratio']}  (release: < 0.6)")
-
-    grab_dist_str = dbg.get("grab_dist")
-    lines.append(
-        f"  grab_dist={grab_dist_str}(grab: <{0.20})  "
-        f"wrist_speed={dbg.get('wrist_speed','?')}(grab block>{0.012})"
-    )
-    lines.append(
-        f"  chop osc={dbg['chop_osc']}  y_amp={dbg['y_amp']}  |  "
-        f"stir osc={dbg['stir_osc']}  x_amp={dbg['x_amp']}  "
-        f"cooldown={dbg['cooldown']}  hold={dbg['hold_counter']}"
-    )
-    lines.append(f"  raw={dbg['raw']}  ->  output={output.value}")
+    lines = [
+        f"[DEBUG {ts}]",
+        f"  chop osc={dbg.get('chop_osc')}  y_amp={dbg.get('y_amp')}  r_y_amp={dbg.get('r_y_amp')}",
+        f"  stir osc={dbg.get('stir_osc')}  x_amp={dbg.get('x_amp')}  r_x_amp={dbg.get('r_x_amp')}",
+        f"  wrist_speed={dbg.get('wrist_speed')}  still={dbg.get('still_counter')}  hold={dbg.get('hold_counter')}",
+        f"  raw={dbg.get('raw')}  ->  output={output.value}",
+    ]
     print("\n".join(lines))
 
 
@@ -159,7 +114,7 @@ def main() -> None:
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
     cap.set(cv2.CAP_PROP_FPS, 30)
 
-    detector = GestureDetector()
+    detector = GestureDetector(debug=DEBUG_MODE)
     show_landmarks = True       # 'v' 키로 토글
     prev_gesture: Gesture | None = None
     gesture_start = time.time()
