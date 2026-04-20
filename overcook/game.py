@@ -327,11 +327,13 @@ class Game:
             self.player = self.players[self.local_player_id]
             self._lock_modes = {pid: None for pid in self.players}  # None = no lock, (mode, station) = locked
             self._player_overlays = {pid: False for pid in self.players}
+            self._player_highlights: dict = {pid: None for pid in self.players}  # pid → overlay highlighted index
         else:
             # Solo: single player
             self.players = {0: Player(gw // 2 - 15, gy - 50, player_id=0, name="Player 1")}
             self.player = self.players[0]
             self._player_overlays = {0: False}
+            self._player_highlights = {0: None}
         
         self.overlay.active = False
         self.overlay.rebuild()
@@ -585,10 +587,13 @@ class Game:
 
     def _act_ing(self, _st):
         if not self.player.holding:
-            # 플레이어별 독립적인 overlay 상태 사용 (self.overlay.active는 사용하지 않음)
             pid = self.player.player_id
             self._player_overlays[pid] = True
+            self._player_highlights[pid] = None  # reset highlight for this player
             self.overlay.highlighted = None
+            # Keep overlay.active in sync for solo path and tests
+            if pid == self.local_player_id:
+                self.overlay.active = True
         else:
             self._pop(self.player.x, self.player.y - 20, "Drop item first!", C["red"])
 
@@ -1418,6 +1423,7 @@ class Game:
         saved_lock_mode = self._lock_mode
         saved_locked_station = self._locked_station
         saved_motion_gate = self._motion_gate_ready.copy()
+        saved_overlay_highlighted = self.overlay.highlighted
 
         try:
             self.player = self.players[pid]
@@ -1435,17 +1441,22 @@ class Game:
                 pid, {"chop": False, "stir": False}
             ).copy()
 
+            # Restore per-player overlay highlight so players don't bleed into each other
+            self.overlay.highlighted = self._player_highlights.get(pid)
+
             self._process_single_input(gi, dt)
 
             # Persist per-player state after processing
             self._lock_modes[pid] = (self._lock_mode, self._locked_station)
             self._motion_gates_per_player[pid] = self._motion_gate_ready.copy()
+            self._player_highlights[pid] = self.overlay.highlighted
         finally:
-            # Always restore global player context
+            # Always restore global overlay/player context
             self.player = saved_player
             self._lock_mode = saved_lock_mode
             self._locked_station = saved_locked_station
             self._motion_gate_ready = saved_motion_gate
+            self.overlay.highlighted = saved_overlay_highlighted
 
     def _process_single_input(self, gi: GameInput, dt: float):
         """Process input for current self.player (extracted for multiplayer reuse)."""
@@ -1594,8 +1605,9 @@ class Game:
             "stations": [s.to_dict() for s in self.stations],
             "orders": [o.to_dict() for o in self.orders],
             # Per-player UI state that clients need to render correctly
-            "player_overlays": {str(pid): v for pid, v in self._player_overlays.items()},
-            "station_locks": {str(k): v for k, v in self._station_locks.items()},
+            "player_overlays":   {str(pid): v for pid, v in self._player_overlays.items()},
+            "player_highlights": {str(pid): v for pid, v in self._player_highlights.items()},
+            "station_locks":     {str(k): v for k, v in self._station_locks.items()},
         }
 
     def apply_state(self, state: dict):
@@ -1650,17 +1662,23 @@ class Game:
             pid = int(pid_str)
             self._player_overlays[pid] = active
 
+        # Sync per-player highlight index (gesture hover state)
+        for pid_str, hi in state.get("player_highlights", {}).items():
+            pid = int(pid_str)
+            self._player_highlights[pid] = hi
+
         # Sync station locks so clients can show "X is using this!" messages
         self._station_locks = {
             int(k): v for k, v in state.get("station_locks", {}).items()
         }
 
-        # Keep local overlay object in sync with this client's overlay state
+        # Keep local overlay object in sync with this client's overlay/highlight state
         local_active = self._player_overlays.get(self.local_player_id, False)
-        if not local_active:
-            # Server closed our overlay (ingredient was picked or cancelled)
-            self.overlay.highlighted = None
         self.overlay.active = local_active
+        if local_active:
+            self.overlay.highlighted = self._player_highlights.get(self.local_player_id)
+        else:
+            self.overlay.highlighted = None
 
         # Keep self.player reference pointing to the local player object
         if self.local_player_id in self.players:
