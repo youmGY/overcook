@@ -64,6 +64,35 @@ class GameInput:
     overlay_select: Optional[int] = None   # 1-based ingredient index from finger gesture
     overlay_confirm: bool = False           # thumbs_up in overlay
 
+    def to_dict(self) -> dict:
+        """Serialize for network transmission (skip local-only fields)."""
+        return {
+            "move_to_slot": self.move_to_slot,
+            "chop": self.chop,
+            "stir": self.stir,
+            "put_down": self.put_down,
+            "confirm": self.confirm,
+            "move_dir": self.move_dir,
+            "action": self.action,
+            "overlay_select": self.overlay_select,
+            "overlay_confirm": self.overlay_confirm,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "GameInput":
+        """Deserialize from network."""
+        return cls(
+            move_to_slot=d.get("move_to_slot"),
+            chop=d.get("chop", False),
+            stir=d.get("stir", False),
+            put_down=d.get("put_down", False),
+            confirm=d.get("confirm", False),
+            move_dir=d.get("move_dir", 0),
+            action=d.get("action", False),
+            overlay_select=d.get("overlay_select"),
+            overlay_confirm=d.get("overlay_confirm", False),
+        )
+
 
 def hand_inputs_to_game_input(hands, overlay_active: bool = False) -> GameInput:
     """Convert List[HandInput] → GameInput following the gesture-action table.
@@ -129,6 +158,10 @@ class Game:
         clahe_clip: float = 2.0,
         clahe_grid: int = 8,
         device: int = 0,
+        multiplayer: bool = False,
+        is_server: bool = False,
+        local_player_id: int = 0,
+        player_name: str = "Player 1",
     ):
         self.ui_mode = ui_mode
         self.use_camera_ui = ui_mode != "test"
@@ -141,6 +174,14 @@ class Game:
         self._start_btn_img = None
         self._load_title_bg()
         self._load_start_btn()
+
+        # Multiplayer fields
+        self.multiplayer = multiplayer
+        self.is_server = is_server
+        self.local_player_id = local_player_id
+        self.players: dict = {}  # pid → Player
+        self._mp_player_names: dict = {}  # pid → name (from lobby)
+        self._lock_modes: dict = {}  # pid → (mode, station) for multiplayer
 
         if self.use_gesture:
             self._init_pipeline(
@@ -265,7 +306,22 @@ class Game:
         self._build_level()
         gw, gh = screen.get_size()
         gy = self._gy()
-        self.player = Player(gw // 2 - 15, gy - 50)
+        
+        # Multiplayer: create players based on _mp_player_names
+        if self.multiplayer and self._mp_player_names:
+            self.players = {}
+            num_players = len(self._mp_player_names)
+            spacing = gw // (num_players + 1)
+            for i, (pid, name) in enumerate(sorted(self._mp_player_names.items())):
+                px = spacing * (i + 1) - Player.PW // 2
+                self.players[pid] = Player(px, gy - Player.PH, player_id=pid, name=name)
+            self.player = self.players[self.local_player_id]
+            self._lock_modes = {pid: None for pid in self.players}
+        else:
+            # Solo: single player
+            self.players = {0: Player(gw // 2 - 15, gy - 50, player_id=0, name="Player 1")}
+            self.player = self.players[0]
+        
         self.overlay.active = False
         self.overlay.rebuild()
         self.recipe_overlay.active = False
@@ -964,7 +1020,11 @@ class Game:
             pygame.draw.rect(screen, (*C["yellow"], 200),
                              (ns.x - 2, ns.y - 2, ns.w + 4, ns.h + 4), 2, border_radius=8)
 
-        self.player.draw(screen)
+        # Draw all players (multiplayer support)
+        for pid, p in self.players.items():
+            is_local = (pid == self.local_player_id)
+            p.draw(screen, is_local=is_local)
+        
         for p in self.popups: p.draw(screen)
 
         self.overlay.draw(screen)
@@ -1155,6 +1215,223 @@ class Game:
         self.btn_pause_continue.draw(screen)
         self.btn_pause_restart.draw(screen)
 
+    # ── Multiplayer Methods ───────────────────────────────────────────
+
+    def set_mp_player_names(self, player_names: dict):
+        """Set player names from lobby (pid → name)."""
+        self._mp_player_names = player_names
+
+    def process_input_for_player(self, pid: int, gi: GameInput, dt: float):
+        """Server: process input for a specific player (swaps self.player temporarily)."""
+        if pid not in self.players:
+            return
+        saved_player = self.player
+        self.player = self.players[pid]
+        
+        # Restore lock state for this player
+        if pid in self._lock_modes and self._lock_modes[pid]:
+            self._lock_mode, self._lock_station = self._lock_modes[pid]
+        else:
+            self._lock_mode = None
+            self._lock_station = None
+        
+        # Process input using existing logic
+        self._process_single_input(gi, dt)
+        
+        # Save lock state for this player
+        self._lock_modes[pid] = (self._lock_mode, self._lock_station)
+        
+        self.player = saved_player
+
+    def _process_single_input(self, gi: GameInput, dt: float):
+        """Process input for current self.player (extracted for multiplayer reuse)."""
+        gw, gh = screen.get_size()
+        
+        if self.overlay.active:
+            if gi.overlay_click:
+                key = self.overlay.check_click(gi.overlay_click)
+                if key:
+                    self._pick_ingredient(key)
+                else:
+                    self.overlay.active = False
+            if gi.overlay_select is not None:
+                self.overlay.highlight_by_index(gi.overlay_select - 1)
+            if gi.overlay_confirm:
+                key = self.overlay.confirm_highlighted()
+                if key:
+                    self._pick_ingredient(key)
+                else:
+                    self.overlay.active = False
+            return
+
+        if self._lock_mode:
+            st = self._lock_station
+            if not gi.chop:
+                self._motion_gate_ready["chop"] = True
+            elif not gi.stir:
+                self._motion_gate_ready["stir"] = True
+
+            if self._lock_mode == "chop" and gi.chop and st:
+                if not self._motion_gate_ready["chop"]:
+                    pass
+                else:
+                    self._act_chop(st, chop_action=True)
+            elif self._lock_mode == "stir" and gi.stir and st:
+                if not self._motion_gate_ready["stir"]:
+                    pass
+                else:
+                    self._act_pot(st, stir_only=True)
+
+            if self._lock_mode == "chop" and (not st or not st.chop_item or st.chop_item.get("chopped")):
+                self._lock_mode = None
+                self._lock_station = None
+                self._motion_gate_ready["chop"] = False
+            elif self._lock_mode == "stir" and st and (st.pot_cooked or st.pot_burned):
+                self._lock_mode = None
+                self._lock_station = None
+                self._motion_gate_ready["stir"] = False
+        else:
+            move_to_slot = gi.move_to_slot
+            clicked_station = self._station_at_point(gi.station_click)
+            if clicked_station:
+                self.player.x = float(clicked_station.cx() - Player.PW // 2)
+                self.player.y = float(self._gy() - Player.PH)
+                self.player.vy = 0.0
+
+            move_dir = gi.move_dir
+            if move_to_slot is not None:
+                target = self._station_for_slot(move_to_slot)
+                if target:
+                    self.player.x = float(target.cx() - Player.PW // 2)
+                    self.player.y = float(self._gy() - Player.PH)
+                    self.player.vy = 0.0
+
+            self.player.update(move_dir, dt, gw, self._gy())
+
+            handled = False
+            if gi.chop:
+                st = self._near()
+                if st and st.kind == "chop":
+                    self._act_chop(st, chop_action=True)
+                    handled = True
+            if gi.stir and not handled:
+                st = self._near()
+                if st and st.kind == "pot":
+                    self._act_pot(st, stir_only=True)
+                    handled = True
+            if (gi.confirm or gi.action) and not handled:
+                self.do_action()
+
+    def server_tick(self, dt: float, all_inputs: dict):
+        """Server: process one game tick with inputs from all players."""
+        # Process each player's input
+        for pid, inp_dict in all_inputs.items():
+            gi = GameInput.from_dict(inp_dict)
+            self.process_input_for_player(pid, gi, dt)
+
+        # Update stations
+        for s in self.stations:
+            events = s.update(dt)
+            for ev in events:
+                if ev == "chop_done":
+                    self._pop(s.cx(), s.y - 14, "✓ Chopped!", C["lime"])
+                    self.audio.play("chop_done")
+                elif ev == "cook_done":
+                    self._pop(s.cx(), s.y - 14, "✓ Cooked! Pick it up!", C["green"])
+                    self.audio.play("cook_done")
+                elif ev == "burned":
+                    self._pop(s.cx(), s.y - 14, "🔥 BURNED!", C["burn"])
+                    self.audio.play("burn_alarm")
+
+        # Update orders
+        gw, gh = screen.get_size()
+        for o in self.orders:
+            ev = o.update(dt)
+            if ev == "failed":
+                self.score = max(0, self.score - 30)
+                self._pop(gw // 2, gh // 2 - 80, "Order failed! -30", C["red"])
+                self.audio.play("fail_wah")
+
+        # Spawn orders
+        self.elapsed += dt
+        if self.elapsed >= self.next_order:
+            self._spawn_order()
+            self.next_order = self.elapsed + 15.0
+
+        # Timer
+        self.timer = max(0.0, self.timer - dt)
+        if self.timer <= 0:
+            self.state = "over"
+
+        # Update popups
+        for p in self.popups:
+            p.update()
+        self.popups = [p for p in self.popups if not p.dead]
+
+    def serialize_state(self) -> dict:
+        """Serialize full game state for network broadcast."""
+        return {
+            "score": self.score,
+            "timer": self.timer,
+            "elapsed": self.elapsed,
+            "next_order": self.next_order,
+            "state": self.state,
+            "players": {pid: p.to_dict() for pid, p in self.players.items()},
+            "stations": [s.to_dict() for s in self.stations],
+            "orders": [o.to_dict() for o in self.orders],
+        }
+
+    def apply_state(self, state: dict):
+        """Client: apply server state snapshot."""
+        self.score = state.get("score", self.score)
+        self.timer = state.get("timer", self.timer)
+        self.elapsed = state.get("elapsed", self.elapsed)
+        self.next_order = state.get("next_order", self.next_order)
+        self.state = state.get("state", self.state)
+
+        # Players
+        for pid_str, pdata in state.get("players", {}).items():
+            pid = int(pid_str)
+            if pid not in self.players:
+                name = pdata.get("name", f"Player {pid + 1}")
+                self.players[pid] = Player(0, 0, player_id=pid, name=name)
+            self.players[pid].apply_dict(pdata)
+
+        # Remove disconnected players
+        server_pids = {int(k) for k in state.get("players", {}).keys()}
+        for pid in list(self.players.keys()):
+            if pid not in server_pids:
+                del self.players[pid]
+
+        # Stations
+        for i, sdata in enumerate(state.get("stations", [])):
+            if i < len(self.stations):
+                self.stations[i].apply_dict(sdata)
+
+        # Orders
+        server_orders = state.get("orders", [])
+        server_ids = {o["id"] for o in server_orders}
+        
+        # Update existing or add new orders
+        existing_ids = {o.id for o in self.orders}
+        for odata in server_orders:
+            oid = odata["id"]
+            existing = next((o for o in self.orders if o.id == oid), None)
+            if existing:
+                existing.apply_dict(odata)
+            else:
+                # Create new order from recipe name
+                recipe_name = odata.get("recipe_name")
+                recipe = next((r for r in RECIPES if r["name"] == recipe_name), None)
+                if recipe:
+                    new_order = Order(recipe)
+                    new_order.id = oid
+                    new_order.apply_dict(odata)
+                    self.orders.append(new_order)
+
+        # Remove orders that disappeared
+        self.orders = [o for o in self.orders if o.id in server_ids]
+
 
 def main():
     parser = argparse.ArgumentParser(description="Overcook-style pygame game")
@@ -1176,6 +1453,10 @@ def main():
                         help="CLAHE tile grid size (default: 8)")
     parser.add_argument("--device", type=int, default=0,
                         help="Camera device index (default: 0)")
+    parser.add_argument("--multiplayer", action="store_true",
+                        help="Enable multiplayer mode (LAN lobby)")
+    parser.add_argument("--name", type=str, default="Player",
+                        help="Player name for multiplayer")
     args = parser.parse_args()
 
     ui_mode = "normal"
@@ -1184,6 +1465,14 @@ def main():
     if args.active or args.gesture:
         ui_mode = "active"
 
+    if args.multiplayer:
+        _main_multiplayer(ui_mode, args)
+    else:
+        _main_solo(ui_mode, args)
+
+
+def _main_solo(ui_mode: str, args):
+    """Solo player game loop (original behavior)."""
     game = Game(
         ui_mode=ui_mode,
         use_gesture=args.gesture,
@@ -1308,6 +1597,344 @@ def main():
         else: game.draw(pipeline_frame)
 
         pygame.display.flip()
+
+
+def _main_multiplayer(ui_mode: str, args):
+    """Multiplayer game loop with lobby."""
+    from network import GameServer, GameClient, RoomAnnouncer, RoomScanner, get_local_ip
+    from lobby_ui import LobbyUI
+    from constants import NET_PORT, NET_TICK_RATE
+
+    lobby_ui = LobbyUI()
+    lobby_state = "lobby_menu"  # lobby_menu, lobby_create, lobby_join, lobby_wait, playing_host, playing_client
+    
+    server = None
+    client = None
+    scanner = None
+    game = None
+    
+    held = {"left": False, "right": False}
+    mpressed = False
+    click_pos = None
+
+    while True:
+        dt = min(clock.tick(FPS) / 1000.0, 0.05)
+        click_pos = None
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                if server: server.stop()
+                if client: client.close()
+                if scanner: scanner.stop()
+                if game: game.shutdown()
+                pygame.quit(); sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = True
+                if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = True
+                if event.key == pygame.K_ESCAPE:
+                    if lobby_state.startswith("lobby"):
+                        if server: server.stop()
+                        if client: client.close()
+                        if scanner: scanner.stop()
+                        pygame.quit(); sys.exit()
+            if event.type == pygame.KEYUP:
+                if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = False
+                if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mpressed = True
+                click_pos = pygame.mouse.get_pos()
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                mpressed = False
+
+        mpos = pygame.mouse.get_pos()
+
+        # ── State Machine ─────────────────────────────────────────────
+
+        if lobby_state == "lobby_menu":
+            action = lobby_ui.update_menu(mpos, mpressed)
+            if action == "create":
+                host_ip = get_local_ip()
+                server = GameServer(host_ip, NET_PORT, room_name=f"{args.name}'s Room")
+                server.start()
+                lobby_state = "lobby_create"
+                lobby_ui.players = [{"id": 0, "name": args.name, "ready": False}]
+                lobby_ui.status_text = f"Listening on {host_ip}:{NET_PORT}"
+            elif action == "join":
+                scanner = RoomScanner()
+                scanner.start()
+                lobby_state = "lobby_join"
+                lobby_ui.rooms = []
+                lobby_ui.selected_room = -1
+            elif action == "solo":
+                _main_solo(ui_mode, args)
+                return
+            lobby_ui.draw_menu()
+
+        elif lobby_state == "lobby_create":
+            action = lobby_ui.update_create(mpos, mpressed)
+            if action == "ready":
+                server.set_host_ready(not server.host_ready)
+            elif action == "start":
+                info = server.get_lobby_info()
+                if info["all_ready"] and info["count"] > 0:
+                    # Collect player names
+                    player_names = {p["id"]: p["name"] for p in info["players"]}
+                    game = Game(
+                        ui_mode=ui_mode,
+                        use_gesture=args.gesture,
+                        flip=args.flip,
+                        fast_motion=args.fast_motion,
+                        clahe=args.clahe,
+                        clahe_clip=args.clahe_clip,
+                        clahe_grid=args.clahe_grid,
+                        device=args.device,
+                        multiplayer=True,
+                        is_server=True,
+                        local_player_id=0,
+                        player_name=args.name,
+                    )
+                    game.set_mp_player_names(player_names)
+                    game.reset()
+                    game.state = "play"
+                    game._spawn_order()
+                    game._spawn_order()
+                    game.audio.play_bgm("play_loop")
+                    server.start_game()
+                    lobby_state = "playing_host"
+                else:
+                    lobby_ui.status_text = "Not all players ready!"
+            elif action == "back":
+                server.stop()
+                server = None
+                lobby_state = "lobby_menu"
+
+            # Update lobby info from server
+            info = server.get_lobby_info()
+            lobby_ui.players = info["players"]
+            lobby_ui.draw_create(f"{server.host}:{server.port}")
+
+        elif lobby_state == "lobby_join":
+            action = lobby_ui.update_join(mpos, mpressed, click_pos=click_pos)
+            if action == "connect":
+                if lobby_ui.selected_room >= 0 and lobby_ui.selected_room < len(lobby_ui.rooms):
+                    room = lobby_ui.rooms[lobby_ui.selected_room]
+                    client = GameClient(room["host"], room["port"], args.name)
+                    if client.connect():
+                        lobby_state = "lobby_wait"
+                        lobby_ui.status_text = f"Connected as Player {client.player_id + 1}"
+                    else:
+                        lobby_ui.status_text = "Connection failed!"
+                        client = None
+            elif action == "back":
+                scanner.stop()
+                scanner = None
+                lobby_state = "lobby_menu"
+
+            lobby_ui.rooms = scanner.get_rooms()
+            lobby_ui.draw_join()
+
+        elif lobby_state == "lobby_wait":
+            action = lobby_ui.update_wait(mpos, mpressed)
+            if action == "ready":
+                client.send_ready(True)
+            elif action == "back":
+                client.close()
+                client = None
+                lobby_state = "lobby_menu"
+
+            # Check for lobby updates
+            try:
+                msg = client.lobby_queue.get_nowait()
+                lobby_ui.players = msg.get("players", [])
+            except:
+                pass
+
+            # Check for game start
+            try:
+                event_msg = client.event_queue.get_nowait()
+                if event_msg.get("type") == "game_start":
+                    # Collect player names
+                    player_names = {p["id"]: p["name"] for p in lobby_ui.players}
+                    game = Game(
+                        ui_mode=ui_mode,
+                        use_gesture=args.gesture,
+                        flip=args.flip,
+                        fast_motion=args.fast_motion,
+                        clahe=args.clahe,
+                        clahe_clip=args.clahe_clip,
+                        clahe_grid=args.clahe_grid,
+                        device=args.device,
+                        multiplayer=True,
+                        is_server=False,
+                        local_player_id=client.player_id,
+                        player_name=args.name,
+                    )
+                    game.set_mp_player_names(player_names)
+                    game.reset()
+                    game.state = "play"
+                    game.audio.play_bgm("play_loop")
+                    lobby_state = "playing_client"
+            except:
+                pass
+
+            lobby_ui.draw_wait()
+
+        elif lobby_state == "playing_host":
+            # Host: collect inputs + server_tick + broadcast
+            _gi_frame = {}
+            station_click = None
+            overlay_click = None
+            pipeline_frame = None
+
+            gesture_gi = GameInput()
+            if game.use_gesture:
+                hand_inputs, pipeline_frame = game.gesture_step()
+                if hand_inputs:
+                    gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=game.overlay.active)
+
+            _SLOT_KEYS = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3, pygame.K_4: 4, pygame.K_5: 5}
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    server.stop()
+                    game.shutdown()
+                    pygame.quit(); sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key in _SLOT_KEYS and game.state == "play":
+                        _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
+                    if event.key in (pygame.K_z, pygame.K_SPACE) and game.state == "play":
+                        _gi_frame["confirm"] = True
+                    if event.key == pygame.K_c and game.state == "play":
+                        _gi_frame["chop"] = True
+                    if event.key == pygame.K_v and game.state == "play":
+                        _gi_frame["stir"] = True
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    click_pos = pygame.mouse.get_pos()
+                    if game.overlay.active:
+                        overlay_click = click_pos
+                    else:
+                        station_click = click_pos
+
+            move_dir = 0
+            if held["left"]: move_dir = -1
+            elif held["right"]: move_dir = 1
+
+            keyboard_gi = GameInput(
+                move_dir=move_dir,
+                move_to_slot=_gi_frame.get("move_to_slot"),
+                station_click=station_click,
+                confirm=_gi_frame.get("confirm", False),
+                chop=_gi_frame.get("chop", False),
+                stir=_gi_frame.get("stir", False),
+                overlay_click=overlay_click,
+            )
+            host_gi = merge_inputs(keyboard_gi, gesture_gi)
+
+            # Collect client inputs
+            net_inputs = server.collect_inputs()
+            net_inputs[0] = host_gi.to_dict()  # Add host input
+
+            # Server tick
+            server_tick_interval = 1.0 / NET_TICK_RATE
+            if not hasattr(game, '_server_tick_accum'):
+                game._server_tick_accum = 0.0
+            game._server_tick_accum += dt
+            
+            while game._server_tick_accum >= server_tick_interval:
+                game.server_tick(server_tick_interval, net_inputs)
+                server.broadcast_state(game.serialize_state())
+                game._server_tick_accum -= server_tick_interval
+                net_inputs = {pid: {} for pid in net_inputs}  # Clear for next tick
+
+            # Local rendering
+            game.draw(pipeline_frame)
+            pygame.display.flip()
+
+            if game.state == "over":
+                server.broadcast_game_over(game.score)
+                server.stop()
+                game.shutdown()
+                return
+
+        elif lobby_state == "playing_client":
+            # Client: send local input + receive state + render
+            _gi_frame = {}
+            station_click = None
+            overlay_click = None
+            pipeline_frame = None
+
+            gesture_gi = GameInput()
+            if game.use_gesture:
+                hand_inputs, pipeline_frame = game.gesture_step()
+                if hand_inputs:
+                    gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=game.overlay.active)
+
+            _SLOT_KEYS = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3, pygame.K_4: 4, pygame.K_5: 5}
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    client.close()
+                    game.shutdown()
+                    pygame.quit(); sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key in _SLOT_KEYS and game.state == "play":
+                        _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
+                    if event.key in (pygame.K_z, pygame.K_SPACE) and game.state == "play":
+                        _gi_frame["confirm"] = True
+                    if event.key == pygame.K_c and game.state == "play":
+                        _gi_frame["chop"] = True
+                    if event.key == pygame.K_v and game.state == "play":
+                        _gi_frame["stir"] = True
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    click_pos = pygame.mouse.get_pos()
+                    if game.overlay.active:
+                        overlay_click = click_pos
+                    else:
+                        station_click = click_pos
+
+            move_dir = 0
+            if held["left"]: move_dir = -1
+            elif held["right"]: move_dir = 1
+
+            keyboard_gi = GameInput(
+                move_dir=move_dir,
+                move_to_slot=_gi_frame.get("move_to_slot"),
+                station_click=station_click,
+                confirm=_gi_frame.get("confirm", False),
+                chop=_gi_frame.get("chop", False),
+                stir=_gi_frame.get("stir", False),
+                overlay_click=overlay_click,
+            )
+            local_gi = merge_inputs(keyboard_gi, gesture_gi)
+
+            # Send input to server
+            client.send_input(local_gi.to_dict())
+
+            # Receive state from server
+            try:
+                state = client.state_queue.get_nowait()
+                game.apply_state(state)
+            except:
+                pass
+
+            # Check for game over
+            try:
+                event_msg = client.event_queue.get_nowait()
+                if event_msg.get("type") == "game_over":
+                    game.state = "over"
+                    game.score = event_msg.get("score", game.score)
+            except:
+                pass
+
+            # Local rendering
+            game.draw(pipeline_frame)
+            pygame.display.flip()
+
+            if game.state == "over":
+                client.close()
+                game.shutdown()
+                return
+
+        pygame.display.flip()
+
 
 if __name__ == "__main__":
     main()

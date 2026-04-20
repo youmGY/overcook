@@ -13,6 +13,7 @@ from constants import (
     ORDER_TIME,
     CHOP_ACTIONS,
     STIR_ACTIONS,
+    PLAYER_COLORS,
 )
 from utils import rr, bar
 
@@ -292,16 +293,60 @@ class Station:
             for lx in (ix - 5, ix, ix + 5):
                 pygame.draw.line(surf, (200, 100, 130), (lx, iy - 6), (lx, iy + 6), 1)
 
+    def to_dict(self) -> dict:
+        """Serialize station state for network transmission."""
+        return {
+            "kind": self.kind,
+            "x": self.x,
+            "y": self.y,
+            "chop_item": self.chop_item,
+            "chop_prog": self.chop_prog,
+            "chop_hits": self.chop_hits,
+            "chopping": self.chopping,
+            "pot_items": self.pot_items,
+            "pot_prog": self.pot_prog,
+            "pot_cooking": self.pot_cooking,
+            "pot_stirs": self.pot_stirs,
+            "pot_cooked": self.pot_cooked,
+            "pot_burn": self.pot_burn,
+            "pot_on": self.pot_on,
+            "pot_burned": self.pot_burned,
+            "plate_item": self.plate_item,
+        }
+
+    def apply_dict(self, d: dict):
+        """Apply server state to this station."""
+        self.chop_item = d.get("chop_item")
+        self.chop_prog = d.get("chop_prog", 0.0)
+        self.chop_hits = d.get("chop_hits", 0)
+        self.chopping = d.get("chopping", False)
+        self.pot_items = d.get("pot_items", [])
+        self.pot_prog = d.get("pot_prog", 0.0)
+        self.pot_cooking = d.get("pot_cooking", False)
+        self.pot_stirs = d.get("pot_stirs", 0)
+        self.pot_cooked = d.get("pot_cooked", False)
+        self.pot_burn = d.get("pot_burn", 0.0)
+        self.pot_on = d.get("pot_on", False)
+        self.pot_burned = d.get("pot_burned", False)
+        self.plate_item = d.get("plate_item")
+
 
 class Player:
     PW, PH = 30, 40
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, player_id: int = 0, name: str = "Player 1"):
         self.x = float(x); self.y = float(y)
         self.vx = 0.0; self.vy = 0.0
         self.facing = 1
         self.holding = None
         self.walk_t = 0.0
+        self.player_id = player_id
+        self.name = name
+        self._color_idx = player_id % len(PLAYER_COLORS)
+
+    def _pc(self, key: str):
+        """Get player color component (body/dark/hat)."""
+        return PLAYER_COLORS[self._color_idx].get(key, C["char_body"])
 
     def center(self):
         return (int(self.x + self.PW // 2), int(self.y + self.PH // 2))
@@ -327,7 +372,7 @@ class Player:
         if abs(self.vx) > 10:
             self.walk_t += dt * 9
 
-    def draw(self, surf):
+    def draw(self, surf, is_local=True):
         px, py = int(self.x), int(self.y)
         f = self.facing
         walk = abs(self.vx) > 10
@@ -335,24 +380,40 @@ class Player:
         ls   = int(math.sin(self.walk_t) * 5) if walk else 0
         as_  = int(math.sin(self.walk_t) * 4) if walk else 0
 
+        # Use player-specific colors
+        pc_body = self._pc("body")
+        pc_dark = self._pc("dark")
+        pc_hat = self._pc("hat")
+
         pygame.draw.ellipse(surf, (0, 0, 0, 50), (px + 2, py + self.PH - 6, self.PW - 4, 7))
-        rr(surf, C["char_dark"], (px + 5,  py + 26 + ls,  10, 14), 3)
-        rr(surf, C["char_hat"],  (px + 17, py + 26 - ls,  10, 14), 3)
-        rr(surf, C["char_body"], (px + 2,  py + 14 + bob, 28, 18), 5)
+        rr(surf, pc_dark, (px + 5,  py + 26 + ls,  10, 14), 3)
+        rr(surf, pc_hat,  (px + 17, py + 26 - ls,  10, 14), 3)
+        rr(surf, pc_body, (px + 2,  py + 14 + bob, 28, 18), 5)
         rr(surf, C["apron"],     (px + 7,  py + 16 + bob, 18, 14), 3)
         rr(surf, (200, 195, 180),(px + 9,  py + 18 + bob, 14, 10), 2)
-        rr(surf, C["char_body"], (px + (26 if f > 0 else 0),  py + 16 + bob - as_, 7, 11), 3)
-        rr(surf, C["char_body"], (px + (1  if f > 0 else 25), py + 16 + bob + as_, 7, 11), 3)
+        rr(surf, pc_body, (px + (26 if f > 0 else 0),  py + 16 + bob - as_, 7, 11), 3)
+        rr(surf, pc_body, (px + (1  if f > 0 else 25), py + 16 + bob + as_, 7, 11), 3)
         pygame.draw.circle(surf, C["char_face"], (px + 16, py + 10 + bob), 11)
         rr(surf, C["white"],    (px + 7,  py + 1 + bob, 18, 8), 2)
         rr(surf, (230, 230, 230),(px + 4, py + 7 + bob, 24, 4), 1)
 
         ex = px + 16 + f * 4
-        pygame.draw.circle(surf, C["char_hat"],    (ex,     py + 10 + bob), 2)
+        pygame.draw.circle(surf, pc_hat,       (ex,     py + 10 + bob), 2)
         pygame.draw.circle(surf, (255, 255, 255),  (ex + 1, py + 9  + bob), 1)
         pygame.draw.arc(surf, (80, 60, 30),
                         (px + 12 + f, py + 12 + bob, 8, 5),
                         math.pi + 0.2, 2 * math.pi - 0.2, 2)
+
+        # Name label above player
+        name_lbl = F[12].render(self.name, True, C["white"])
+        name_x = px + self.PW // 2 - name_lbl.get_width() // 2
+        name_y = py - 18
+        surf.blit(name_lbl, (name_x, name_y))
+        if is_local:
+            # Underline for local player
+            pygame.draw.line(surf, pc_body, 
+                           (name_x, name_y + name_lbl.get_height() + 1),
+                           (name_x + name_lbl.get_width(), name_y + name_lbl.get_height() + 1), 2)
 
         if self.holding:
             hx = px + 16 + f * 24
@@ -396,6 +457,29 @@ class Player:
                 else:
                     lbl = F[12].render(ing.get("label", "")[:3], True, (0, 0, 0))
                 surf.blit(lbl, (hx - lbl.get_width() // 2, hy - lbl.get_height() // 2))
+
+    def to_dict(self) -> dict:
+        """Serialize player state for network transmission."""
+        return {
+            "x": self.x,
+            "y": self.y,
+            "vx": self.vx,
+            "vy": self.vy,
+            "facing": self.facing,
+            "holding": self.holding,
+            "player_id": self.player_id,
+            "name": self.name,
+        }
+
+    def apply_dict(self, d: dict):
+        """Apply server state to this player."""
+        self.x = d.get("x", self.x)
+        self.y = d.get("y", self.y)
+        self.vx = d.get("vx", self.vx)
+        self.vy = d.get("vy", self.vy)
+        self.facing = d.get("facing", self.facing)
+        self.holding = d.get("holding")
+        # player_id and name don't change
 
 
 class Order:
@@ -452,3 +536,17 @@ class Order:
         pct = self.t / ORDER_TIME if self.status == "active" else 0
         col_f = C["green"] if pct > 0.4 else C["orange"] if pct > 0.15 else C["red"]
         bar(surf, x + 4, y + h - 11, w - 8, 6, pct, (25, 38, 48), col_f, 2)
+
+    def to_dict(self) -> dict:
+        """Serialize order state for network transmission."""
+        return {
+            "id": self.id,
+            "recipe_name": self.recipe["name"],
+            "t": self.t,
+            "status": self.status,
+        }
+
+    def apply_dict(self, d: dict):
+        """Apply server state to this order."""
+        self.t = d.get("t", self.t)
+        self.status = d.get("status", self.status)

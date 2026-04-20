@@ -68,3 +68,16 @@ CHOP_ACTIONS = 4
 STIR_ACTIONS = 5
 ORDER_TIME = 55.0
 GAME_TIME  = 240.0
+
+# ── Multiplayer Network ───────────────────────────────────────────────
+NET_PORT = 5555
+NET_DISCOVERY_PORT = 5556
+NET_MAX_PLAYERS = 4
+NET_TICK_RATE = 20  # server updates per second
+
+PLAYER_COLORS = [
+    {"body": ( 83,  65, 183), "dark": ( 57,  40, 137), "hat": ( 38,  33, 105), "name": "Purple"},  # P0
+    {"body": (183,  85,  65), "dark": (137,  57,  40), "hat": (105,  38,  33), "name": "Red"},     # P1
+    {"body": ( 65, 183,  85), "dark": ( 40, 137,  57), "hat": ( 33, 105,  38), "name": "Green"},   # P2
+    {"body": ( 65, 135, 183), "dark": ( 40,  97, 137), "hat": ( 33,  78, 105), "name": "Blue"},    # P3
+]
