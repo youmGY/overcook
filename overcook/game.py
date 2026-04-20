@@ -681,14 +681,15 @@ class Game:
         pid = self.player.player_id
 
         if stir_only:
-            # 멀티플레이어: 다른 플레이어가 사용 중이면 거부
-            if not self._can_use_station(st, pid):
+            # Stove lock applies only while actively stirring (cooking in progress).
+            # A different player can start stirring if no one is currently locked in.
+            if st.pot_cooking and not self._can_use_station(st, pid):
                 locked_by = self._station_locks.get(self._get_station_idx(st))
                 if locked_by is not None and locked_by in self.players:
                     other_name = self.players[locked_by].name
-                    self._pop(self.player.x, self.player.y - 20, f"{other_name} is cooking!", C["red"])
+                    self._pop(self.player.x, self.player.y - 20, f"{other_name} is stirring!", C["red"])
                 return
-            
+
             if h:
                 self._pop(self.player.x, self.player.y - 20, "Drop item first!", C["red"])
                 return
@@ -699,7 +700,7 @@ class Game:
                 self._pop(st.cx(), st.y - 14, "Already burned! Clear it.", C["burn"])
                 return
             if not st.pot_cooking and not st.pot_cooked:
-                # Lock station when starting to cook
+                # First stir: lock station for this player's stir session
                 self._lock_station(st, pid)
                 st.pot_on = True
                 st.pot_cooking = True
@@ -727,21 +728,15 @@ class Game:
         if h and h.get("cooked"):
             self._pop(self.player.x, self.player.y - 20, "Can't add cooked dish!", C["red"])
         elif h and not st.pot_cooked:
-            # 멀티플레이어: 재료 추가 시 락 체크 (pot에 이미 재료가 있으면 사용 중)
-            if st.pot_items and not self._can_use_station(st, pid):
-                locked_by = self._station_locks.get(self._get_station_idx(st))
-                if locked_by is not None and locked_by in self.players:
-                    other_name = self.players[locked_by].name
-                    self._pop(self.player.x, self.player.y - 20, f"{other_name} is using this!", C["red"])
+            # Anyone can add ingredients as long as cooking hasn't started yet.
+            if st.pot_cooking:
+                self._pop(self.player.x, self.player.y - 20, "Already cooking! Wait.", C["orange"])
                 return
-            
+
             base = h.get("id", "").replace("_c", "")
             if INGS.get(base, {}).get("can_chop") and not h.get("chopped"):
                 self._pop(self.player.x, self.player.y - 20, "Chop it first!", C["red"])
             else:
-                # Lock station when first ingredient is added
-                if not st.pot_items:
-                    self._lock_station(st, pid)
                 st.pot_items.append(dict(h))
                 self.player.holding = None
                 self._pop(st.cx(), st.y - 14, "Added ✓", C["gold"])
