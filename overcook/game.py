@@ -63,21 +63,23 @@ class GameInput:
     action:        bool = False
     overlay_click: Optional[tuple] = None
     # gesture-sourced overlay commands
-    overlay_select: Optional[int] = None   # 1-based ingredient index from finger gesture
-    overlay_confirm: bool = False           # thumbs_up in overlay
+    overlay_select:  Optional[int] = None  # 1-based ingredient index from finger gesture
+    overlay_confirm: bool = False          # thumbs_up in overlay
+    overlay_cancel:  bool = False          # ESC / cancel overlay
 
     def to_dict(self) -> dict:
         """Serialize for network transmission (skip local-only fields)."""
         return {
-            "move_to_slot": self.move_to_slot,
-            "chop": self.chop,
-            "stir": self.stir,
-            "put_down": self.put_down,
-            "confirm": self.confirm,
-            "move_dir": self.move_dir,
-            "action": self.action,
-            "overlay_select": self.overlay_select,
+            "move_to_slot":   self.move_to_slot,
+            "chop":           self.chop,
+            "stir":           self.stir,
+            "put_down":       self.put_down,
+            "confirm":        self.confirm,
+            "move_dir":       self.move_dir,
+            "action":         self.action,
+            "overlay_select":  self.overlay_select,
             "overlay_confirm": self.overlay_confirm,
+            "overlay_cancel":  self.overlay_cancel,
         }
 
     @classmethod
@@ -93,6 +95,7 @@ class GameInput:
             action=d.get("action", False),
             overlay_select=d.get("overlay_select"),
             overlay_confirm=d.get("overlay_confirm", False),
+            overlay_cancel=d.get("overlay_cancel", False),
         )
 
 
@@ -146,6 +149,7 @@ def merge_inputs(keyboard_gi: GameInput, gesture_gi: GameInput) -> GameInput:
         overlay_click=keyboard_gi.overlay_click,
         overlay_select=gesture_gi.overlay_select,
         overlay_confirm=gesture_gi.overlay_confirm,
+        overlay_cancel=keyboard_gi.overlay_cancel or gesture_gi.overlay_cancel,
     )
 
 
@@ -321,8 +325,8 @@ class Game:
                 px = spacing * (i + 1) - Player.PW // 2
                 self.players[pid] = Player(px, gy - Player.PH, player_id=pid, name=name)
             self.player = self.players[self.local_player_id]
-            self._lock_modes = {pid: None for pid in self.players}
-            self._player_overlays = {pid: False for pid in self.players}  # 각 플레이어별 overlay 상태
+            self._lock_modes = {pid: None for pid in self.players}  # None = no lock, (mode, station) = locked
+            self._player_overlays = {pid: False for pid in self.players}
         else:
             # Solo: single player
             self.players = {0: Player(gw // 2 - 15, gy - 50, player_id=0, name="Player 1")}
@@ -962,16 +966,21 @@ class Game:
                 self._hurry_bgm_active = False
             return
 
-        # 로컬 플레이어의 overlay 상태 확인 (멀티플레이어에서 독립적)
+        # Solo: handle local overlay (pantry ingredient selection)
+        # In multiplayer, this path is not taken — use _process_single_input via server_tick instead.
         local_overlay_active = self._player_overlays.get(self.local_player_id, False)
         if local_overlay_active:
+            if gi.overlay_cancel:
+                self._player_overlays[self.local_player_id] = False
+                self.overlay.highlighted = None
+                return
             if gi.overlay_click:
                 key = self.overlay.check_click(gi.overlay_click)
-                if key: 
+                if key:
                     self._pick_ingredient(key)
-                else: 
+                else:
                     self._player_overlays[self.local_player_id] = False
-            # Gesture: finger_N highlights, thumbs_up confirms
+                    self.overlay.highlighted = None
             if gi.overlay_select is not None:
                 self.overlay.highlight_by_index(gi.overlay_select - 1)  # 1-based → 0-based
             if gi.overlay_confirm:
@@ -980,6 +989,7 @@ class Game:
                     self._pick_ingredient(key)
                 else:
                     self._player_overlays[self.local_player_id] = False
+                    self.overlay.highlighted = None
             return
 
         if self.recipe_overlay.active: return
@@ -1403,48 +1413,60 @@ class Game:
         """Server: process input for a specific player (swaps self.player temporarily)."""
         if pid not in self.players:
             return
+
         saved_player = self.player
-        self.player = self.players[pid]
-        
-        # Restore lock state for this player
-        if pid in self._lock_modes and self._lock_modes[pid]:
-            self._lock_mode, self._locked_station = self._lock_modes[pid]
-        else:
-            self._lock_mode = None
-            self._locked_station = None
-        
-        # Restore per-player motion gate
-        if pid in self._motion_gates_per_player:
-            self._motion_gate_ready = self._motion_gates_per_player[pid].copy()
-        else:
-            self._motion_gate_ready = {"chop": False, "stir": False}
-        
-        # Process input using existing logic
-        self._process_single_input(gi, dt)
-        
-        # Save lock state for this player
-        self._lock_modes[pid] = (self._lock_mode, self._locked_station)
-        # Save motion gate for this player
-        self._motion_gates_per_player[pid] = self._motion_gate_ready.copy()
-        
-        self.player = saved_player
+        saved_lock_mode = self._lock_mode
+        saved_locked_station = self._locked_station
+        saved_motion_gate = self._motion_gate_ready.copy()
+
+        try:
+            self.player = self.players[pid]
+
+            # Restore per-player lock state
+            lock_entry = self._lock_modes.get(pid)
+            if lock_entry:
+                self._lock_mode, self._locked_station = lock_entry
+            else:
+                self._lock_mode = None
+                self._locked_station = None
+
+            # Restore per-player motion gate
+            self._motion_gate_ready = self._motion_gates_per_player.get(
+                pid, {"chop": False, "stir": False}
+            ).copy()
+
+            self._process_single_input(gi, dt)
+
+            # Persist per-player state after processing
+            self._lock_modes[pid] = (self._lock_mode, self._locked_station)
+            self._motion_gates_per_player[pid] = self._motion_gate_ready.copy()
+        finally:
+            # Always restore global player context
+            self.player = saved_player
+            self._lock_mode = saved_lock_mode
+            self._locked_station = saved_locked_station
+            self._motion_gate_ready = saved_motion_gate
 
     def _process_single_input(self, gi: GameInput, dt: float):
         """Process input for current self.player (extracted for multiplayer reuse)."""
         gw, gh = screen.get_size()
         
-        # 현재 처리 중인 플레이어의 overlay 상태 확인
+        # Process per-player overlay (pantry ingredient selection)
         pid = self.player.player_id
         player_overlay_active = self._player_overlays.get(pid, False)
-        
+
         if player_overlay_active:
+            if gi.overlay_cancel:
+                self._player_overlays[pid] = False
+                self.overlay.highlighted = None
+                return
             if gi.overlay_click:
                 key = self.overlay.check_click(gi.overlay_click)
                 if key:
                     self._pick_ingredient(key)
                 else:
                     self._player_overlays[pid] = False
-                    # 서버에서는 overlay.active를 직접 사용하지 않음
+                    self.overlay.highlighted = None
             if gi.overlay_select is not None:
                 self.overlay.highlight_by_index(gi.overlay_select - 1)
             if gi.overlay_confirm:
@@ -1453,6 +1475,7 @@ class Game:
                     self._pick_ingredient(key)
                 else:
                     self._player_overlays[pid] = False
+                    self.overlay.highlighted = None
             return
 
         if self._lock_mode:
@@ -1567,9 +1590,12 @@ class Game:
             "elapsed": self.elapsed,
             "next_order": self.next_order,
             "state": self.state,
-            "players": {pid: p.to_dict() for pid, p in self.players.items()},
+            "players": {str(pid): p.to_dict() for pid, p in self.players.items()},
             "stations": [s.to_dict() for s in self.stations],
             "orders": [o.to_dict() for o in self.orders],
+            # Per-player UI state that clients need to render correctly
+            "player_overlays": {str(pid): v for pid, v in self._player_overlays.items()},
+            "station_locks": {str(k): v for k, v in self._station_locks.items()},
         }
 
     def apply_state(self, state: dict):
@@ -1602,16 +1628,13 @@ class Game:
         # Orders
         server_orders = state.get("orders", [])
         server_ids = {o["id"] for o in server_orders}
-        
-        # Update existing or add new orders
-        existing_ids = {o.id for o in self.orders}
+
         for odata in server_orders:
             oid = odata["id"]
             existing = next((o for o in self.orders if o.id == oid), None)
             if existing:
                 existing.apply_dict(odata)
             else:
-                # Create new order from recipe name
                 recipe_name = odata.get("recipe_name")
                 recipe = next((r for r in RECIPES if r["name"] == recipe_name), None)
                 if recipe:
@@ -1620,8 +1643,24 @@ class Game:
                     new_order.apply_dict(odata)
                     self.orders.append(new_order)
 
-        # Remove orders that disappeared
         self.orders = [o for o in self.orders if o.id in server_ids]
+
+        # Sync per-player overlay state so each client renders its own overlay correctly
+        for pid_str, active in state.get("player_overlays", {}).items():
+            pid = int(pid_str)
+            self._player_overlays[pid] = active
+
+        # Sync station locks so clients can show "X is using this!" messages
+        self._station_locks = {
+            int(k): v for k, v in state.get("station_locks", {}).items()
+        }
+
+        # Keep local overlay object in sync with this client's overlay state
+        local_active = self._player_overlays.get(self.local_player_id, False)
+        if not local_active:
+            # Server closed our overlay (ingredient was picked or cancelled)
+            self.overlay.highlighted = None
+        self.overlay.active = local_active
 
         # Keep self.player reference pointing to the local player object
         if self.local_player_id in self.players:
@@ -1735,7 +1774,9 @@ def _main_solo(ui_mode: str, args):
                         game.recipe_overlay.active = False
                         game.audio.play("page_flip")
                     elif game._player_overlays.get(game.local_player_id, False):
-                        game._player_overlays[game.local_player_id] = False
+                        # overlay_cancel is propagated through GameInput so the server
+                        # also closes this player's overlay authoritatively
+                        _gi_frame["overlay_cancel"] = True
                     elif game.state == "play":
                         game.state = "paused"
                         game.audio.play("ui_pause")
@@ -1797,15 +1838,16 @@ def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) ->
         stir=_gi_frame.get("stir", False),
         put_down=_gi_frame.get("put_down", False),
         overlay_click=overlay_click,
+        overlay_cancel=_gi_frame.get("overlay_cancel", False),
     )
     return merge_inputs(keyboard_gi, gesture_gi), pipeline_frame
 
 
 def _main_multiplayer(ui_mode: str, args):
     """Multiplayer game loop with lobby."""
-    from network import GameServer, GameClient, RoomAnnouncer, RoomScanner, get_local_ip
-    from lobby_ui import LobbyUI
-    from constants import NET_PORT, NET_TICK_RATE
+    from .network import GameServer, GameClient, RoomAnnouncer, RoomScanner, get_local_ip
+    from .ui.lobby_ui import LobbyUI
+    from .constants import NET_PORT, NET_TICK_RATE
 
     lobby_ui = LobbyUI()
     lobby_state = "lobby_menu"  # lobby_menu, lobby_create, lobby_join, lobby_wait, playing_host, playing_client
@@ -1848,6 +1890,9 @@ def _main_multiplayer(ui_mode: str, args):
                         return
                 # Game keys (only processed during playing states)
                 if lobby_state.startswith("playing") and game and game.state == "play":
+                    if event.key == pygame.K_ESCAPE:
+                        if game and game._player_overlays.get(getattr(game, "local_player_id", 0), False):
+                            _gi_frame["overlay_cancel"] = True
                     if event.key in _SLOT_KEYS:
                         _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
                     if event.key in (pygame.K_z, pygame.K_SPACE):
