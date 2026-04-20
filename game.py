@@ -808,8 +808,13 @@ class Game:
         if self.recipe_overlay.active: return
 
         if self._lock_mode:
-            # Position locked — only the relevant action is allowed
-            act_flags = {"confirm": False, "chop": gi.chop, "stir": gi.stir, "pause": False}
+            # While action mode is locked, still allow movement controls.
+            act_flags = {
+                "confirm": gi.confirm or gi.action,
+                "chop": gi.chop,
+                "stir": gi.stir,
+                "pause": False,
+            }
             for btn in self.btn_acts:
                 key = next(k for k, v in self.btn_acts_map.items() if v is btn)
                 if btn.update(mpos, mpressed):
@@ -819,7 +824,32 @@ class Game:
                 self.audio.play("ui_pause")
                 self.audio.pause_bgm()
                 return
+
+            move_to_slot = gi.move_to_slot
+            clicked_station = self._station_at_point(gi.station_click)
+            if clicked_station:
+                self.player.x = float(clicked_station.cx() - Player.PW // 2)
+                self.player.y = float(self._gy() - Player.PH)
+                self.player.vy = 0.0
+
+            move_dir = gi.move_dir
+            if move_to_slot is not None:
+                target = self._station_for_slot(move_to_slot)
+                if target:
+                    self.player.x = float(target.cx() - Player.PW // 2)
+                    self.player.y = float(self._gy() - Player.PH)
+                    self.player.vy = 0.0
+
+            self.player.update(move_dir, dt, gw, self._gy())
+
             st = self._lock_station
+
+            # Allow thumbs_up/confirm interactions even while lock mode is active.
+            if act_flags["confirm"] and st:
+                if self._lock_mode == "chop":
+                    self._act_chop(st, chop_action=False)
+                elif self._lock_mode == "stir":
+                    self._act_pot(st, stir_only=False)
 
             # Arm counting only after first neutral frame post lock-entry.
             if self._lock_mode == "chop" and not gi.chop:
@@ -827,13 +857,13 @@ class Game:
             elif self._lock_mode == "stir" and not gi.stir:
                 self._motion_gate_ready["stir"] = True
 
-            if self._lock_mode == "chop" and act_flags["chop"] and st:
+            if self._lock_mode == "chop" and act_flags["chop"] and st and not act_flags["confirm"]:
                 # Ignore stale gesture pulse that existed before lock started.
                 if gi.chop and not self._motion_gate_ready["chop"]:
                     pass
                 else:
                     self._act_chop(st, chop_action=True)
-            elif self._lock_mode == "stir" and act_flags["stir"] and st:
+            elif self._lock_mode == "stir" and act_flags["stir"] and st and not act_flags["confirm"]:
                 if gi.stir and not self._motion_gate_ready["stir"]:
                     pass
                 else:
@@ -843,7 +873,11 @@ class Game:
                 self._lock_mode = None
                 self._lock_station = None
                 self._motion_gate_ready["chop"] = False
-            elif self._lock_mode == "stir" and st and (st.pot_cooked or st.pot_burned):
+            elif self._lock_mode == "stir" and st and (
+                st.pot_cooked
+                or st.pot_burned
+                or (not st.pot_cooking and not st.pot_items)
+            ):
                 self._lock_mode = None
                 self._lock_station = None
                 self._motion_gate_ready["stir"] = False
