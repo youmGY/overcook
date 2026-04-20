@@ -199,7 +199,7 @@ class RecognitionPipeline:
                 per_conf = max(per_conf, both_conf)
                 per_count = 0
 
-            if per_motion is None and label == LABEL_THUMBS_UP and confirmed:
+            if per_motion is None and label == LABEL_THUMBS_UP:
                 per_motion = LABEL_THUMBS_UP
                 per_conf = 1.0
                 per_count = 0

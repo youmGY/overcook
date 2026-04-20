@@ -271,6 +271,8 @@ class Game:
         self.recipe_overlay.active = False
         self._lock_mode = None
         self._lock_station = None
+        # State-gated motion counting: avoid consuming stale motion on lock entry.
+        self._motion_gate_ready = {"chop": False, "stir": False}
 
     def _gy(self):
         _, gh = screen.get_size()
@@ -508,9 +510,10 @@ class Game:
                 self.audio.play("place")
             self._lock_mode = "chop"
             self._lock_station = st
+            self._motion_gate_ready["chop"] = False
             return
 
-        if st.chop_item and st.chop_item.get("chopped"):
+        if (not chop_action) and st.chop_item and st.chop_item.get("chopped"):
             self.player.holding = dict(st.chop_item)
             st.chop_item = None
             st.chop_prog = 0.0
@@ -548,6 +551,7 @@ class Game:
                 st.pot_prog = 0.0
                 self._lock_mode = "stir"
                 self._lock_station = st
+                self._motion_gate_ready["stir"] = False
                 self.audio.play("ignite_whoosh")
             st.pot_stirs += 1
             if st.pot_stirs >= STIR_ACTIONS + 5:
@@ -816,17 +820,33 @@ class Game:
                 self.audio.pause_bgm()
                 return
             st = self._lock_station
+
+            # Arm counting only after first neutral frame post lock-entry.
+            if self._lock_mode == "chop" and not gi.chop:
+                self._motion_gate_ready["chop"] = True
+            elif self._lock_mode == "stir" and not gi.stir:
+                self._motion_gate_ready["stir"] = True
+
             if self._lock_mode == "chop" and act_flags["chop"] and st:
-                self._act_chop(st, chop_action=True)
+                # Ignore stale gesture pulse that existed before lock started.
+                if gi.chop and not self._motion_gate_ready["chop"]:
+                    pass
+                else:
+                    self._act_chop(st, chop_action=True)
             elif self._lock_mode == "stir" and act_flags["stir"] and st:
-                self._act_pot(st, stir_only=True)
+                if gi.stir and not self._motion_gate_ready["stir"]:
+                    pass
+                else:
+                    self._act_pot(st, stir_only=True)
             # Unlock when done
-            if self._lock_mode == "chop" and st and st.chop_item and st.chop_item.get("chopped"):
+            if self._lock_mode == "chop" and (not st or not st.chop_item or st.chop_item.get("chopped")):
                 self._lock_mode = None
                 self._lock_station = None
+                self._motion_gate_ready["chop"] = False
             elif self._lock_mode == "stir" and st and (st.pot_cooked or st.pot_burned):
                 self._lock_mode = None
                 self._lock_station = None
+                self._motion_gate_ready["stir"] = False
         else:
             move_to_slot = gi.move_to_slot
             clicked_station = self._station_at_point(gi.station_click)

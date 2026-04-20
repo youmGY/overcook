@@ -153,7 +153,7 @@ def target_slot_for(label: str) -> Optional[int]:
 class GestureDebouncer:
     """Confirm a gesture only after it persists for N consecutive frames."""
 
-    n: int = 4
+    n: int = 3
     _pending: Optional[str] = None
     _streak: int = 0
     _confirmed: Optional[str] = field(default=None)
