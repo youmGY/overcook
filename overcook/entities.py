@@ -166,6 +166,7 @@ class Station:
 
         return events
 
+
     def draw(self, surf, gy):
         if self.kind == "ing":
             base, top = C["ing_base"], C["ing_top"]
@@ -189,6 +190,47 @@ class Station:
 
         ix, iy = self.cx(), self.y - 18
         self._draw_icon(surf, ix, iy)
+
+        # --- 각 station 위에 올려진 재료(음식) 표시 ---
+        center_x = self.cx()
+        top_y = self.y - 32  # station 위에 띄워서 그림
+        if self.kind == "chop" and self.chop_item:
+            item_id = self.chop_item.get("id", "")
+            img = get_img(item_id, 28, 28)
+            if img:
+                surf.blit(img, (center_x - 14, top_y))
+            else:
+                bid = item_id.replace("_c", "")
+                col = INGS.get(bid, {}).get("color", (180, 180, 180))
+                pygame.draw.circle(surf, col, (center_x, top_y + 14), 14)
+        elif self.kind == "pot" and self.pot_items:
+            # pot에는 여러 재료가 들어갈 수 있으니, 최대 3개까지 나란히 그림
+            n = min(len(self.pot_items), 3)
+            img_size = 22
+            gap = 4
+            total_w = n * img_size + (n - 1) * gap
+            start_x = center_x - total_w // 2
+            for i, item in enumerate(self.pot_items[:3]):
+                img = get_img(item["id"], img_size, img_size)
+                x = start_x + i * (img_size + gap)
+                if img:
+                    surf.blit(img, (x, top_y + 6))
+                else:
+                    bid = item["id"].replace("_c", "")
+                    col = INGS.get(bid, {}).get("color", (180, 180, 180))
+                    pygame.draw.circle(surf, col, (x + img_size // 2, top_y + 6 + img_size // 2), img_size // 2)
+        elif self.kind == "plate" and self.plate_item:
+            item_id = self.plate_item.get("id", "")
+            img = get_img(item_id, 28, 28)
+            if img:
+                surf.blit(img, (center_x - 14, top_y + 8))
+            else:
+                bid = item_id.replace("_c", "")
+                col = INGS.get(bid, {}).get("color", (180, 180, 180))
+                pygame.draw.circle(surf, col, (center_x, top_y + 22), 14)
+        elif self.kind == "submit":
+            # submit station에는 직접 올려놓는 음식이 없으므로 생략
+            pass
 
     def _station_label(self):
         if self.kind == "ing":    return "Pantry"
