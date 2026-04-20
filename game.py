@@ -119,7 +119,17 @@ def merge_inputs(keyboard_gi: GameInput, gesture_gi: GameInput) -> GameInput:
 
 
 class Game:
-    def __init__(self, ui_mode: str = "active", use_gesture: bool = False, flip: bool = True):
+    def __init__(
+        self,
+        ui_mode: str = "active",
+        use_gesture: bool = False,
+        flip: bool = True,
+        fast_motion: bool = False,
+        clahe: bool = True,
+        clahe_clip: float = 2.0,
+        clahe_grid: int = 8,
+        device: int = 0,
+    ):
         self.ui_mode = ui_mode
         self.use_camera_ui = ui_mode != "test"
         self.use_gesture = use_gesture
@@ -133,7 +143,14 @@ class Game:
         self._load_start_btn()
 
         if self.use_gesture:
-            self._init_pipeline(flip)
+            self._init_pipeline(
+                flip,
+                fast_motion=fast_motion,
+                clahe=clahe,
+                clahe_clip=clahe_clip,
+                clahe_grid=clahe_grid,
+                device=device,
+            )
         elif self.use_camera_ui:
             self._init_camera()
 
@@ -185,18 +202,39 @@ class Game:
             return
         self._camera = cam
 
-    def _init_pipeline(self, flip: bool):
+    def _init_pipeline(
+        self,
+        flip: bool,
+        fast_motion: bool = False,
+        clahe: bool = True,
+        clahe_clip: float = 2.0,
+        clahe_grid: int = 8,
+        device: int = 0,
+    ):
         """Initialise the gesture recognition pipeline (lazy import)."""
         try:
             from src.recognition.camera import CameraConfig
             from src.recognition.hand_tracker import HandTrackerConfig
             from src.recognition.interface import RecognitionPipeline
+
+            fps = 60 if fast_motion else 30
+            max_hands = 1 if fast_motion else 2
+            min_conf = 0.15 if fast_motion else 0.2
             self._pipeline = RecognitionPipeline(
-                camera_cfg=CameraConfig(device_index=0, width=640, height=480, fps=30),
-                hand_cfg=HandTrackerConfig(),
+                camera_cfg=CameraConfig(device_index=device, width=640, height=480, fps=fps),
+                hand_cfg=HandTrackerConfig(
+                    max_num_hands=max_hands,
+                    min_detection_confidence=min_conf,
+                    min_tracking_confidence=min_conf,
+                    detect_every_n_frames=1,
+                    input_scale=1.0,
+                ),
                 flip=flip,
+                clahe=clahe,
+                clahe_clip=clahe_clip,
+                clahe_grid=clahe_grid,
             )
-            log.info("Gesture recognition pipeline initialised")
+            log.info("Gesture pipeline init: fast=%s clahe=%s device=%s", fast_motion, clahe, device)
         except Exception as e:
             log.error("Failed to init gesture pipeline: %s", e)
             self._camera_error = f"Pipeline init failed: {e}"
@@ -1106,6 +1144,18 @@ def main():
                         help="Enable gesture recognition input (camera + hand tracking)")
     parser.add_argument("--flip", action="store_true", default=True,
                         help="Mirror camera horizontally (default: True)")
+    parser.add_argument("--fast-motion", action="store_true",
+                        help="Fast-motion preset for rapid chop/stir capture")
+    parser.add_argument("--clahe", dest="clahe", action="store_true", default=True,
+                        help="Enable CLAHE brightness normalization (default: on)")
+    parser.add_argument("--no-clahe", dest="clahe", action="store_false",
+                        help="Disable CLAHE brightness normalization")
+    parser.add_argument("--clahe-clip", type=float, default=2.0,
+                        help="CLAHE clip limit (default: 2.0)")
+    parser.add_argument("--clahe-grid", type=int, default=8,
+                        help="CLAHE tile grid size (default: 8)")
+    parser.add_argument("--device", type=int, default=0,
+                        help="Camera device index (default: 0)")
     args = parser.parse_args()
 
     ui_mode = "normal"
@@ -1114,7 +1164,16 @@ def main():
     if args.active or args.gesture:
         ui_mode = "active"
 
-    game = Game(ui_mode=ui_mode, use_gesture=args.gesture, flip=args.flip)
+    game = Game(
+        ui_mode=ui_mode,
+        use_gesture=args.gesture,
+        flip=args.flip,
+        fast_motion=args.fast_motion,
+        clahe=args.clahe,
+        clahe_clip=args.clahe_clip,
+        clahe_grid=args.clahe_grid,
+        device=args.device,
+    )
     game.audio.play_bgm("intro_bgm")
     held      = {"left": False, "right": False}
     _gi_frame: dict = {}

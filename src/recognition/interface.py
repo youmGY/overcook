@@ -4,10 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-# Hand landmark index for wrist
-_LM_WRIST = 0
-
-import numpy as np
+import cv2
 
 from .camera import CameraConfig, ThreadedCamera, open_camera
 from .gesture import (
@@ -22,31 +19,50 @@ from .hand_tracker import HandTracker, HandTrackerConfig
 from .motion import MotionDebug, MotionDetector, compute_hand_flags
 
 
+_MISSING_GESTURE_HOLD_FRAMES = 10
+
+
+def _apply_clahe(frame_bgr, clip_limit: float, grid: int):
+    """Normalize brightness in LAB space to reduce over/under exposure issues."""
+    lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    clahe = cv2.createCLAHE(
+        clipLimit=max(0.1, clip_limit),
+        tileGridSize=(max(2, grid), max(2, grid)),
+    )
+    l2 = clahe.apply(l_channel)
+    return cv2.cvtColor(cv2.merge((l2, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
+
+
+def _count_from_label(label: str, fallback: int = 0) -> int:
+    if label.startswith("finger_"):
+        try:
+            return int(label.split("_")[1])
+        except (IndexError, ValueError):
+            return fallback
+    if label == LABEL_THUMBS_UP:
+        return 1
+    if label == LABEL_UNKNOWN:
+        return 0
+    return fallback
+
+
 @dataclass
 class HandInput:
-    """Per-frame, per-hand input payload for Part B (game engine)."""
-
-    hand_id: str                           # "left" or "right"
-    position: Tuple[float, float]          # normalized (x, y) in 0~1
-    gesture: str                           # finger_1..5 | thumbs_up | unknown
-    finger_count: int                      # 0~5
-    target_slot: Optional[int]             # 1..5 when finger_N, else None
-    gesture_confirmed: bool                # debounce-confirmed this frame
-    motion: Optional[str]                  # chop/stir/hands_together/palms_down/thumbs_up/None
-    motion_confidence: float               # 0.0~1.0
-    motion_count: int = 0                  # new chop/stir strokes this frame (0, 1, rarely 2+)
+    hand_id: str
+    position: Tuple[float, float]
+    gesture: str
+    finger_count: int
+    target_slot: Optional[int]
+    gesture_confirmed: bool
+    motion: Optional[str]
+    motion_confidence: float
+    motion_count: int = 0
     stale: bool = False
 
 
 class RecognitionPipeline:
-    """Hands + DNN gesture → HandInput list.
-
-    Usage:
-        pipe = RecognitionPipeline()
-        while running:
-            inputs = pipe.step()
-        pipe.close()
-    """
+    """Hands + DNN gesture -> HandInput list."""
 
     def __init__(
         self,
@@ -55,10 +71,16 @@ class RecognitionPipeline:
         flip: bool = True,
         gesture_onnx_path: Optional[str] = None,
         gesture_confidence: float = 0.6,
+        clahe: bool = True,
+        clahe_clip: float = 2.0,
+        clahe_grid: int = 8,
     ) -> None:
         self.camera_cfg = camera_cfg or CameraConfig()
         self.hand_cfg = hand_cfg or HandTrackerConfig()
         self.flip = flip
+        self._clahe = clahe
+        self._clahe_clip = clahe_clip
+        self._clahe_grid = clahe_grid
 
         self._cap = ThreadedCamera(open_camera(self.camera_cfg))
         self._hands = HandTracker(self.hand_cfg)
@@ -70,6 +92,12 @@ class RecognitionPipeline:
         )
 
         self._last_frame = None
+        self._missing_hold: Dict[str, int] = {"left": 0, "right": 0}
+        self._last_stable_label: Dict[str, str] = {
+            "left": LABEL_UNKNOWN,
+            "right": LABEL_UNKNOWN,
+        }
+        self._last_stable_count: Dict[str, int] = {"left": 0, "right": 0}
 
     @property
     def last_frame(self):
@@ -84,7 +112,6 @@ class RecognitionPipeline:
         return self._motion.debug
 
     def _mp_handedness_label(self, hand_id: str) -> str:
-        """Map splitter's viewer-perspective hand_id to MediaPipe subject label."""
         mp_label = "Right" if hand_id == "left" else "Left"
         if self.flip:
             mp_label = "Left" if mp_label == "Right" else "Right"
@@ -95,14 +122,13 @@ class RecognitionPipeline:
         if not ok:
             return []
         if self.flip:
-            import cv2
-
             frame = cv2.flip(frame, 1)
+        if self._clahe:
+            frame = _apply_clahe(frame, self._clahe_clip, self._clahe_grid)
 
         hand_results = self._hands.process(frame, draw=draw_overlay)
         hands = self._splitter.update(hand_results, flipped=self.flip)
 
-        # Per-hand gesture (DNN) + hand flags (rule-based for motion)
         per_hand_label: Dict[str, str] = {}
         per_hand_count: Dict[str, int] = {}
         per_hand_confirmed: Dict[str, bool] = {}
@@ -111,41 +137,52 @@ class RecognitionPipeline:
         for hand_id in ("left", "right"):
             state = hands[hand_id]
             if state.landmarks is None:
-                label, _ = state.debouncer.update(LABEL_UNKNOWN)
-                per_hand_label[hand_id] = label
-                per_hand_count[hand_id] = 0
+                if (
+                    self._missing_hold[hand_id] < _MISSING_GESTURE_HOLD_FRAMES
+                    and self._last_stable_label[hand_id] != LABEL_UNKNOWN
+                ):
+                    per_hand_label[hand_id] = self._last_stable_label[hand_id]
+                    per_hand_count[hand_id] = self._last_stable_count[hand_id]
+                else:
+                    label, _ = state.debouncer.update(LABEL_UNKNOWN)
+                    per_hand_label[hand_id] = label
+                    per_hand_count[hand_id] = 0
                 per_hand_confirmed[hand_id] = False
                 hand_flags[hand_id] = compute_hand_flags(None, "", False)
+                self._missing_hold[hand_id] += 1
                 continue
 
+            self._missing_hold[hand_id] = 0
             mp_label = self._mp_handedness_label(hand_id)
 
-            # DNN gesture classification
             lm_np = landmarks_to_numpy(state.landmarks)
             raw_label, _conf, count = self._gesture_dnn.predict(lm_np)
             label, just_confirmed = state.debouncer.update(raw_label)
 
             per_hand_label[hand_id] = label
-            per_hand_count[hand_id] = count
+            per_hand_count[hand_id] = _count_from_label(label, fallback=count)
             per_hand_confirmed[hand_id] = just_confirmed
+            if label != LABEL_UNKNOWN:
+                self._last_stable_label[hand_id] = label
+                self._last_stable_count[hand_id] = per_hand_count[hand_id]
 
-            # Rule-based flags for motion.py's palms_down detection
-            hand_flags[hand_id] = compute_hand_flags(
-                state.landmarks, mp_label, self.flip,
-            )
+            hand_flags[hand_id] = compute_hand_flags(state.landmarks, mp_label, self.flip)
 
-        # Extract wrist positions from hand landmarks for chop/stir detection
         hand_wrists: Dict[str, Optional[Tuple[float, float]]] = {}
         for hand_id in ("left", "right"):
             state = hands[hand_id]
             if state.landmarks is not None:
-                wlm = state.landmarks[_LM_WRIST]
-                hand_wrists[hand_id] = (wlm.x, wlm.y)
+                sum_x = 0.0
+                sum_y = 0.0
+                count = len(state.landmarks)
+                for lm in state.landmarks:
+                    sum_x += lm.x
+                    sum_y += lm.y
+                hand_wrists[hand_id] = (sum_x / count, sum_y / count)
             else:
                 hand_wrists[hand_id] = None
 
-        # Motion detection (chop / stir / hands_together / palms_down)
-        motion_results = self._motion.update(hand_flags, hand_wrists)
+        motion_results = self._motion.update(hand_flags, hand_wrists, fps=self._hands.fps)
         both_label, both_conf, _both_cnt = motion_results.get("both", (None, 0.0, 0))
 
         outputs: List[HandInput] = []
@@ -160,9 +197,8 @@ class RecognitionPipeline:
             if both_label is not None:
                 per_motion = both_label
                 per_conf = max(per_conf, both_conf)
-                per_count = 0  # two-hand events have no stroke count
+                per_count = 0
 
-            # Promote thumbs_up gesture → motion field on confirmation frame
             if per_motion is None and label == LABEL_THUMBS_UP and confirmed:
                 per_motion = LABEL_THUMBS_UP
                 per_conf = 1.0
@@ -197,7 +233,6 @@ _global_pipeline: Optional[RecognitionPipeline] = None
 
 
 def get_hand_inputs() -> List[HandInput]:
-    """Return the latest per-hand inputs from a lazily-created global pipeline."""
     global _global_pipeline
     if _global_pipeline is None:
         _global_pipeline = RecognitionPipeline()

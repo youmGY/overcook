@@ -36,3 +36,5 @@ htmlcov/
 
 # Jupyter
 .ipynb_checkpoints/
+
+game.log
