@@ -330,7 +330,7 @@ class Game:
         self.overlay.rebuild()
         self.recipe_overlay.active = False
         self._lock_mode = None
-        self._lock_station = None
+        self._locked_station = None
         # State-gated motion counting: per-player to avoid cross-player interference.
         self._motion_gate_ready = {"chop": False, "stir": False}
         self._motion_gates_per_player: dict = {}  # pid → {"chop": bool, "stir": bool}
@@ -338,6 +338,7 @@ class Game:
             self._motion_gates_per_player[pid] = {"chop": False, "stir": False}
         # Station locks (멀티플레이어 조리대 선착순 사용)
         self._station_locks = {}  # station_idx → player_id
+        self._server_tick_accum = 0.0
 
     def _gy(self):
         _, gh = screen.get_size()
@@ -628,7 +629,7 @@ class Game:
                 self._pop(st.cx(), st.y - 14, "Placed on board", C["lime"])
                 self.audio.play("place")
             self._lock_mode = "chop"
-            self._lock_station = st
+            self._locked_station = st
             self._motion_gate_ready["chop"] = False
             return
 
@@ -665,10 +666,6 @@ class Game:
     def _act_pot(self, st, stir_only=False):
         h = self.player.holding
         burned = st.pot_burned
-
-    def _act_pot(self, st, stir_only=False):
-        h = self.player.holding
-        burned = st.pot_burned
         pid = self.player.player_id
 
         if stir_only:
@@ -697,7 +694,7 @@ class Game:
                 st.pot_stirs = 0
                 st.pot_prog = 0.0
                 self._lock_mode = "stir"
-                self._lock_station = st
+                self._locked_station = st
                 self._motion_gate_ready["stir"] = False
                 self.audio.play("ignite_whoosh")
             st.pot_stirs += 1
@@ -882,11 +879,11 @@ class Game:
         self.audio.play("order_bell")
 
     def _hint(self):
-        if self._lock_mode == "chop" and self._lock_station:
-            st = self._lock_station
+        if self._lock_mode == "chop" and self._locked_station:
+            st = self._locked_station
             return f"Chopping! Press Chop ({st.chop_hits}/{CHOP_ACTIONS})"
-        if self._lock_mode == "stir" and self._lock_station:
-            st = self._lock_station
+        if self._lock_mode == "stir" and self._locked_station:
+            st = self._locked_station
             return f"Stirring! Press Stir ({st.pot_stirs}/{STIR_ACTIONS})"
         # 로컬 플레이어의 overlay 상태 확인
         local_overlay_active = self._player_overlays.get(self.local_player_id, False)
@@ -1023,7 +1020,7 @@ class Game:
 
             self.player.update(move_dir, dt, gw, self._gy())
 
-            st = self._lock_station
+            st = self._locked_station
             px, py = self.player.center()
             in_lock_range = bool(st and st.dist(px, py) < 110)
 
@@ -1066,7 +1063,7 @@ class Game:
             # Unlock when done
             if self._lock_mode == "chop" and (not st or not st.chop_item or st.chop_item.get("chopped")):
                 self._lock_mode = None
-                self._lock_station = None
+                self._locked_station = None
                 self._motion_gate_ready["chop"] = False
             elif self._lock_mode == "stir" and st and (
                 st.pot_cooked
@@ -1074,7 +1071,7 @@ class Game:
                 or (not st.pot_cooking and not st.pot_items)
             ):
                 self._lock_mode = None
-                self._lock_station = None
+                self._locked_station = None
                 self._motion_gate_ready["stir"] = False
         else:
             move_to_slot = gi.move_to_slot
@@ -1408,10 +1405,10 @@ class Game:
         
         # Restore lock state for this player
         if pid in self._lock_modes and self._lock_modes[pid]:
-            self._lock_mode, self._lock_station = self._lock_modes[pid]
+            self._lock_mode, self._locked_station = self._lock_modes[pid]
         else:
             self._lock_mode = None
-            self._lock_station = None
+            self._locked_station = None
         
         # Restore per-player motion gate
         if pid in self._motion_gates_per_player:
@@ -1423,7 +1420,7 @@ class Game:
         self._process_single_input(gi, dt)
         
         # Save lock state for this player
-        self._lock_modes[pid] = (self._lock_mode, self._lock_station)
+        self._lock_modes[pid] = (self._lock_mode, self._locked_station)
         # Save motion gate for this player
         self._motion_gates_per_player[pid] = self._motion_gate_ready.copy()
         
@@ -1456,7 +1453,7 @@ class Game:
             return
 
         if self._lock_mode:
-            st = self._lock_station
+            st = self._locked_station
             if not gi.chop:
                 self._motion_gate_ready["chop"] = True
             elif not gi.stir:
@@ -1475,11 +1472,11 @@ class Game:
 
             if self._lock_mode == "chop" and (not st or not st.chop_item or st.chop_item.get("chopped")):
                 self._lock_mode = None
-                self._lock_station = None
+                self._locked_station = None
                 self._motion_gate_ready["chop"] = False
             elif self._lock_mode == "stir" and st and (st.pot_cooked or st.pot_burned):
                 self._lock_mode = None
-                self._lock_station = None
+                self._locked_station = None
                 self._motion_gate_ready["stir"] = False
         else:
             move_to_slot = gi.move_to_slot
@@ -1698,17 +1695,6 @@ def _main_solo(ui_mode: str, args):
         overlay_click = None
         pipeline_frame = None
 
-        # ── gesture recognition step ──────────────────────────────────
-        gesture_gi = GameInput()
-        if game.use_gesture:
-            hand_inputs, pipeline_frame = game.gesture_step()
-            if hand_inputs:
-                local_overlay = game._player_overlays.get(game.local_player_id, False)
-                gesture_gi = hand_inputs_to_game_input(
-                    hand_inputs,
-                    overlay_active=local_overlay,
-                )
-
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 game.shutdown()
@@ -1771,22 +1757,10 @@ def _main_solo(ui_mode: str, args):
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
 
-        move_dir = 0
-        if held["left"]:    move_dir = -1
-        elif held["right"]: move_dir = 1
-
         mpos = pygame.mouse.get_pos()
-        keyboard_gi = GameInput(
-            move_dir     = move_dir,
-            move_to_slot = _gi_frame.get("move_to_slot"),
-            station_click= station_click,
-            confirm      = _gi_frame.get("confirm",  False),
-            chop         = _gi_frame.get("chop",     False),
-            stir         = _gi_frame.get("stir",     False),
-            put_down     = _gi_frame.get("put_down", False),
-            overlay_click= overlay_click,
+        gi, pipeline_frame = _collect_local_input(
+            game, held, _gi_frame, station_click, overlay_click
         )
-        gi = merge_inputs(keyboard_gi, gesture_gi)
         game.update(dt, gi, mpos, mpressed)
 
         if game.state == "title": game.draw_title()
@@ -1795,6 +1769,33 @@ def _main_solo(ui_mode: str, args):
         else: game.draw(pipeline_frame)
 
         pygame.display.flip()
+
+
+def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) -> tuple:
+    """Collect gesture + keyboard input for the local player. Returns (GameInput, frame)."""
+    pipeline_frame = None
+    gesture_gi = GameInput()
+    if game.use_gesture:
+        hand_inputs, pipeline_frame = game.gesture_step()
+        if hand_inputs:
+            local_overlay = game._player_overlays.get(game.local_player_id, False)
+            gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=local_overlay)
+
+    move_dir = 0
+    if held["left"]: move_dir = -1
+    elif held["right"]: move_dir = 1
+
+    keyboard_gi = GameInput(
+        move_dir=move_dir,
+        move_to_slot=_gi_frame.get("move_to_slot"),
+        station_click=station_click,
+        confirm=_gi_frame.get("confirm", False),
+        chop=_gi_frame.get("chop", False),
+        stir=_gi_frame.get("stir", False),
+        put_down=_gi_frame.get("put_down", False),
+        overlay_click=overlay_click,
+    )
+    return merge_inputs(keyboard_gi, gesture_gi), pipeline_frame
 
 
 def _main_multiplayer(ui_mode: str, args):
@@ -1970,7 +1971,7 @@ def _main_multiplayer(ui_mode: str, args):
             try:
                 msg = client.lobby_queue.get_nowait()
                 lobby_ui.players = msg.get("players", [])
-            except:
+            except Exception:
                 pass
 
             # Check for game start
@@ -1998,36 +1999,16 @@ def _main_multiplayer(ui_mode: str, args):
                     game.state = "play"
                     game.audio.play_bgm("play_loop")
                     lobby_state = "playing_client"
-            except:
+            except Exception:
                 pass
 
             lobby_ui.draw_wait()
 
         elif lobby_state == "playing_host":
             # Host: collect inputs + server_tick + broadcast
-            pipeline_frame = None
-
-            gesture_gi = GameInput()
-            if game.use_gesture:
-                hand_inputs, pipeline_frame = game.gesture_step()
-                if hand_inputs:
-                    local_overlay = game._player_overlays.get(game.local_player_id, False)
-                    gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=local_overlay)
-
-            move_dir = 0
-            if held["left"]: move_dir = -1
-            elif held["right"]: move_dir = 1
-
-            keyboard_gi = GameInput(
-                move_dir=move_dir,
-                move_to_slot=_gi_frame.get("move_to_slot"),
-                station_click=station_click,
-                confirm=_gi_frame.get("confirm", False),
-                chop=_gi_frame.get("chop", False),
-                stir=_gi_frame.get("stir", False),
-                overlay_click=overlay_click,
+            host_gi, pipeline_frame = _collect_local_input(
+                game, held, _gi_frame, station_click, overlay_click
             )
-            host_gi = merge_inputs(keyboard_gi, gesture_gi)
 
             # Collect client inputs
             net_inputs = server.collect_inputs()
@@ -2035,8 +2016,6 @@ def _main_multiplayer(ui_mode: str, args):
 
             # Server tick
             server_tick_interval = 1.0 / NET_TICK_RATE
-            if not hasattr(game, '_server_tick_accum'):
-                game._server_tick_accum = 0.0
             game._server_tick_accum += dt
             
             ticked = False
@@ -2066,29 +2045,9 @@ def _main_multiplayer(ui_mode: str, args):
 
         elif lobby_state == "playing_client":
             # Client: send local input + receive state + render
-            pipeline_frame = None
-
-            gesture_gi = GameInput()
-            if game.use_gesture:
-                hand_inputs, pipeline_frame = game.gesture_step()
-                if hand_inputs:
-                    local_overlay = game._player_overlays.get(game.local_player_id, False)
-                    gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=local_overlay)
-
-            move_dir = 0
-            if held["left"]: move_dir = -1
-            elif held["right"]: move_dir = 1
-
-            keyboard_gi = GameInput(
-                move_dir=move_dir,
-                move_to_slot=_gi_frame.get("move_to_slot"),
-                station_click=station_click,
-                confirm=_gi_frame.get("confirm", False),
-                chop=_gi_frame.get("chop", False),
-                stir=_gi_frame.get("stir", False),
-                overlay_click=overlay_click,
+            local_gi, pipeline_frame = _collect_local_input(
+                game, held, _gi_frame, station_click, overlay_click
             )
-            local_gi = merge_inputs(keyboard_gi, gesture_gi)
 
             # Send input to server
             client.send_input(local_gi.to_dict())
@@ -2097,7 +2056,7 @@ def _main_multiplayer(ui_mode: str, args):
             try:
                 state = client.state_queue.get_nowait()
                 game.apply_state(state)
-            except:
+            except Exception:
                 pass
 
             # Check for game over
@@ -2106,7 +2065,7 @@ def _main_multiplayer(ui_mode: str, args):
                 if event_msg.get("type") == "game_over":
                     game.state = "over"
                     game.score = event_msg.get("score", game.score)
-            except:
+            except Exception:
                 pass
 
             # Local rendering

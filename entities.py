@@ -1,7 +1,6 @@
 import pygame
 import math
 import time
-import random
 import os
 
 from engine import F, get_img

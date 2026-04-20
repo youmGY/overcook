@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Callable, Dict, List, Optional
 
-from constants import NET_PORT, NET_DISCOVERY_PORT, NET_MAX_PLAYERS, NET_TICK_RATE
+from constants import NET_PORT, NET_DISCOVERY_PORT, NET_MAX_PLAYERS
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -186,7 +186,6 @@ class GameServer:
 
         self._announcer: Optional[RoomAnnouncer] = None
         self._accept_thread: Optional[threading.Thread] = None
-        self._recv_threads: List[threading.Thread] = []
 
         # Lobby state
         self.host_ready = False
@@ -283,7 +282,6 @@ class GameServer:
 
             t = threading.Thread(target=self._recv_loop, args=(slot,), daemon=True)
             t.start()
-            self._recv_threads.append(t)
             self._notify_lobby()
 
     # ── per-client receive loop ───────────────────────────────────────
@@ -305,7 +303,8 @@ class GameServer:
 
             mtype = msg.get("type")
             if mtype == "ready":
-                slot.ready = bool(msg.get("ready", True))
+                with self._lock:
+                    slot.ready = bool(msg.get("ready", True))
                 self._notify_lobby()
             elif mtype == "player_input":
                 try:
@@ -313,7 +312,8 @@ class GameServer:
                 except queue.Full:
                     pass
 
-        slot.alive = False
+        with self._lock:
+            slot.alive = False
         self._notify_lobby()
 
     # ── lobby helpers ─────────────────────────────────────────────────
@@ -395,6 +395,7 @@ class GameServer:
                     c.conn.close()
                 except Exception:
                     pass
+                self._clients.remove(c)
 
 
 # ── game client ───────────────────────────────────────────────────────
