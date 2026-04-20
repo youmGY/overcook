@@ -36,15 +36,11 @@ def _hand_scale_from_landmarks(landmarks) -> Optional[float]:
     return max(1e-4, max(palm_w, palm_l))
 
 
-def _apply_clahe(frame_bgr, clip_limit: float, grid: int):
+def _apply_clahe(frame_bgr, clahe_obj):
     """Normalize brightness in LAB space to reduce over/under exposure issues."""
     lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
-    clahe = cv2.createCLAHE(
-        clipLimit=max(0.1, clip_limit),
-        tileGridSize=(max(2, grid), max(2, grid)),
-    )
-    l2 = clahe.apply(l_channel)
+    l2 = clahe_obj.apply(l_channel)
     return cv2.cvtColor(cv2.merge((l2, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
 
 
@@ -95,6 +91,12 @@ class RecognitionPipeline:
         self._clahe = clahe
         self._clahe_clip = clahe_clip
         self._clahe_grid = clahe_grid
+        self._clahe_obj = None
+        if self._clahe:
+            self._clahe_obj = cv2.createCLAHE(
+                clipLimit=max(0.1, self._clahe_clip),
+                tileGridSize=(max(2, self._clahe_grid), max(2, self._clahe_grid)),
+            )
 
         self._cap = ThreadedCamera(open_camera(self.camera_cfg))
         self._hands = HandTracker(self.hand_cfg)
@@ -138,7 +140,7 @@ class RecognitionPipeline:
         if self.flip:
             frame = cv2.flip(frame, 1)
         if self._clahe:
-            frame = _apply_clahe(frame, self._clahe_clip, self._clahe_grid)
+            frame = _apply_clahe(frame, self._clahe_obj)
 
         hand_results = self._hands.process(frame, draw=draw_overlay)
         hands = self._splitter.update(hand_results, flipped=self.flip)
