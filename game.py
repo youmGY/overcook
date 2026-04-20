@@ -331,8 +331,11 @@ class Game:
         self.recipe_overlay.active = False
         self._lock_mode = None
         self._lock_station = None
-        # State-gated motion counting: avoid consuming stale motion on lock entry.
+        # State-gated motion counting: per-player to avoid cross-player interference.
         self._motion_gate_ready = {"chop": False, "stir": False}
+        self._motion_gates_per_player: dict = {}  # pid → {"chop": bool, "stir": bool}
+        for pid in self.players:
+            self._motion_gates_per_player[pid] = {"chop": False, "stir": False}
         # Station locks (멀티플레이어 조리대 선착순 사용)
         self._station_locks = {}  # station_idx → player_id
 
@@ -1410,11 +1413,19 @@ class Game:
             self._lock_mode = None
             self._lock_station = None
         
+        # Restore per-player motion gate
+        if pid in self._motion_gates_per_player:
+            self._motion_gate_ready = self._motion_gates_per_player[pid].copy()
+        else:
+            self._motion_gate_ready = {"chop": False, "stir": False}
+        
         # Process input using existing logic
         self._process_single_input(gi, dt)
         
         # Save lock state for this player
         self._lock_modes[pid] = (self._lock_mode, self._lock_station)
+        # Save motion gate for this player
+        self._motion_gates_per_player[pid] = self._motion_gate_ready.copy()
         
         self.player = saved_player
 
@@ -1612,6 +1623,10 @@ class Game:
         # Remove orders that disappeared
         self.orders = [o for o in self.orders if o.id in server_ids]
 
+        # Keep self.player reference pointing to the local player object
+        if self.local_player_id in self.players:
+            self.player = self.players[self.local_player_id]
+
 
 def main():
     parser = argparse.ArgumentParser(description="Overcook-style pygame game")
@@ -1717,7 +1732,7 @@ def _main_solo(ui_mode: str, args):
                 if event.key == pygame.K_r:
                     if game.state == "play":
                         game.recipe_overlay.active = not game.recipe_overlay.active
-                        game.overlay.active = False
+                        game._player_overlays[game.local_player_id] = False
                         game.audio.play("page_flip")
                 if event.key == pygame.K_RETURN:
                     if game.state in ("title", "over"):
@@ -1749,8 +1764,10 @@ def _main_solo(ui_mode: str, args):
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mpressed = True
                 click_pos = pygame.mouse.get_pos()
-                if game.overlay.active: overlay_click = click_pos
-                else: station_click = click_pos
+                if game._player_overlays.get(game.local_player_id, False):
+                    overlay_click = click_pos
+                else:
+                    station_click = click_pos
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
 
@@ -1798,9 +1815,14 @@ def _main_multiplayer(ui_mode: str, args):
     mpressed = False
     click_pos = None
 
+    _SLOT_KEYS = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3, pygame.K_4: 4, pygame.K_5: 5}
+
     while True:
         dt = min(clock.tick(FPS) / 1000.0, 0.05)
         click_pos = None
+        station_click = None
+        overlay_click = None
+        _gi_frame = {}
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -1808,7 +1830,8 @@ def _main_multiplayer(ui_mode: str, args):
                 if client: client.close()
                 if scanner: scanner.stop()
                 if game: game.shutdown()
-                pygame.quit(); sys.exit()
+                pygame.quit()
+                return
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = True
                 if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = True
@@ -1817,13 +1840,29 @@ def _main_multiplayer(ui_mode: str, args):
                         if server: server.stop()
                         if client: client.close()
                         if scanner: scanner.stop()
-                        pygame.quit(); sys.exit()
+                        pygame.quit()
+                        return
+                # Game keys (only processed during playing states)
+                if lobby_state.startswith("playing") and game and game.state == "play":
+                    if event.key in _SLOT_KEYS:
+                        _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
+                    if event.key in (pygame.K_z, pygame.K_SPACE):
+                        _gi_frame["confirm"] = True
+                    if event.key == pygame.K_c:
+                        _gi_frame["chop"] = True
+                    if event.key == pygame.K_v:
+                        _gi_frame["stir"] = True
             if event.type == pygame.KEYUP:
                 if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = False
                 if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mpressed = True
                 click_pos = pygame.mouse.get_pos()
+                # Assign click to overlay or station based on local overlay state
+                if game and game._player_overlays.get(getattr(game, 'local_player_id', 0), False):
+                    overlay_click = click_pos
+                elif lobby_state.startswith("playing"):
+                    station_click = click_pos
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
 
@@ -1882,12 +1921,14 @@ def _main_multiplayer(ui_mode: str, args):
                     game.audio.play_bgm("play_loop")
                     server.start_game()
                     lobby_state = "playing_host"
+                    continue
                 else:
                     lobby_ui.status_text = "Not all players ready!"
             elif action == "back":
                 server.stop()
                 server = None
                 lobby_state = "lobby_menu"
+                continue
 
             # Update lobby info from server
             info = server.get_lobby_info()
@@ -1910,6 +1951,7 @@ def _main_multiplayer(ui_mode: str, args):
                 scanner.stop()
                 scanner = None
                 lobby_state = "lobby_menu"
+                continue
 
             lobby_ui.rooms = scanner.get_rooms()
             lobby_ui.draw_join()
@@ -1922,6 +1964,7 @@ def _main_multiplayer(ui_mode: str, args):
                 client.close()
                 client = None
                 lobby_state = "lobby_menu"
+                continue
 
             # Check for lobby updates
             try:
@@ -1962,9 +2005,6 @@ def _main_multiplayer(ui_mode: str, args):
 
         elif lobby_state == "playing_host":
             # Host: collect inputs + server_tick + broadcast
-            _gi_frame = {}
-            station_click = None
-            overlay_click = None
             pipeline_frame = None
 
             gesture_gi = GameInput()
@@ -1973,28 +2013,6 @@ def _main_multiplayer(ui_mode: str, args):
                 if hand_inputs:
                     local_overlay = game._player_overlays.get(game.local_player_id, False)
                     gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=local_overlay)
-
-            _SLOT_KEYS = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3, pygame.K_4: 4, pygame.K_5: 5}
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    server.stop()
-                    game.shutdown()
-                    pygame.quit(); sys.exit()
-                if event.type == pygame.KEYDOWN:
-                    if event.key in _SLOT_KEYS and game.state == "play":
-                        _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
-                    if event.key in (pygame.K_z, pygame.K_SPACE) and game.state == "play":
-                        _gi_frame["confirm"] = True
-                    if event.key == pygame.K_c and game.state == "play":
-                        _gi_frame["chop"] = True
-                    if event.key == pygame.K_v and game.state == "play":
-                        _gi_frame["stir"] = True
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    click_pos = pygame.mouse.get_pos()
-                    if game.overlay.active:
-                        overlay_click = click_pos
-                    else:
-                        station_click = click_pos
 
             move_dir = 0
             if held["left"]: move_dir = -1
@@ -2021,11 +2039,20 @@ def _main_multiplayer(ui_mode: str, args):
                 game._server_tick_accum = 0.0
             game._server_tick_accum += dt
             
+            ticked = False
             while game._server_tick_accum >= server_tick_interval:
                 game.server_tick(server_tick_interval, net_inputs)
-                server.broadcast_state(game.serialize_state())
                 game._server_tick_accum -= server_tick_interval
-                net_inputs = {pid: {} for pid in net_inputs}  # Clear for next tick
+                ticked = True
+                # After first tick, keep only continuous inputs (move_dir)
+                # and clear one-shot actions to avoid double-firing
+                for pid in list(net_inputs.keys()):
+                    inp = net_inputs[pid]
+                    if isinstance(inp, dict):
+                        net_inputs[pid] = {"move_dir": inp.get("move_dir", 0)}
+
+            if ticked:
+                server.broadcast_state(game.serialize_state())
 
             # Local rendering
             game.draw(pipeline_frame)
@@ -2039,9 +2066,6 @@ def _main_multiplayer(ui_mode: str, args):
 
         elif lobby_state == "playing_client":
             # Client: send local input + receive state + render
-            _gi_frame = {}
-            station_click = None
-            overlay_click = None
             pipeline_frame = None
 
             gesture_gi = GameInput()
@@ -2050,28 +2074,6 @@ def _main_multiplayer(ui_mode: str, args):
                 if hand_inputs:
                     local_overlay = game._player_overlays.get(game.local_player_id, False)
                     gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=local_overlay)
-
-            _SLOT_KEYS = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3, pygame.K_4: 4, pygame.K_5: 5}
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    client.close()
-                    game.shutdown()
-                    pygame.quit(); sys.exit()
-                if event.type == pygame.KEYDOWN:
-                    if event.key in _SLOT_KEYS and game.state == "play":
-                        _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
-                    if event.key in (pygame.K_z, pygame.K_SPACE) and game.state == "play":
-                        _gi_frame["confirm"] = True
-                    if event.key == pygame.K_c and game.state == "play":
-                        _gi_frame["chop"] = True
-                    if event.key == pygame.K_v and game.state == "play":
-                        _gi_frame["stir"] = True
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    click_pos = pygame.mouse.get_pos()
-                    if game.overlay.active:
-                        overlay_click = click_pos
-                    else:
-                        station_click = click_pos
 
             move_dir = 0
             if held["left"]: move_dir = -1
@@ -2116,7 +2118,9 @@ def _main_multiplayer(ui_mode: str, args):
                 game.shutdown()
                 return
 
-        pygame.display.flip()
+        # For lobby states that don't call flip internally
+        if not lobby_state.startswith("playing"):
+            pygame.display.flip()
 
 
 if __name__ == "__main__":
