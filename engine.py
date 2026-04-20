@@ -4,7 +4,9 @@ import os
 pygame.init()
 
 W, H = 1024, 600
-screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
+# Use fullscreen mode by default (as per MULTIPLAYER_DEV.md)
+_info = pygame.display.Info()
+screen = pygame.display.set_mode((_info.current_w, _info.current_h), pygame.FULLSCREEN)
 pygame.display.set_caption("Cooking Game")
 clock = pygame.time.Clock()
 FPS = 60

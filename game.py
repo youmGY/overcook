@@ -182,6 +182,7 @@ class Game:
         self.players: dict = {}  # pid → Player
         self._mp_player_names: dict = {}  # pid → name (from lobby)
         self._lock_modes: dict = {}  # pid → (mode, station) for multiplayer
+        self._player_overlays: dict = {}  # pid → overlay active state (독립적 팬트리)
 
         if self.use_gesture:
             self._init_pipeline(
@@ -317,10 +318,12 @@ class Game:
                 self.players[pid] = Player(px, gy - Player.PH, player_id=pid, name=name)
             self.player = self.players[self.local_player_id]
             self._lock_modes = {pid: None for pid in self.players}
+            self._player_overlays = {pid: False for pid in self.players}  # 각 플레이어별 overlay 상태
         else:
             # Solo: single player
             self.players = {0: Player(gw // 2 - 15, gy - 50, player_id=0, name="Player 1")}
             self.player = self.players[0]
+            self._player_overlays = {0: False}
         
         self.overlay.active = False
         self.overlay.rebuild()
@@ -532,6 +535,9 @@ class Game:
 
     def _act_ing(self, _st):
         if not self.player.holding:
+            # 플레이어별 독립적인 overlay 상태 사용
+            pid = self.player.player_id
+            self._player_overlays[pid] = True
             self.overlay.active = True
             self.overlay.highlighted = None
         else:
@@ -759,6 +765,9 @@ class Game:
         ing = INGS[ing_key]
         self.player.holding = {"id": ing_key, "label": ing["label"], "chopped": False}
         self._pop(self.player.x, self.player.y - 20, f"Picked {ing['label']}", C["lime"])
+        # 플레이어별 독립적인 overlay 상태 사용
+        pid = self.player.player_id
+        self._player_overlays[pid] = False
         self.overlay.active = False
         self.audio.play("pickup")
 
@@ -778,7 +787,10 @@ class Game:
         if self._lock_mode == "stir" and self._lock_station:
             st = self._lock_station
             return f"Stirring! Press Stir ({st.pot_stirs}/{STIR_ACTIONS})"
-        if self.overlay.active: return "Click an ingredient card  |  ESC to cancel"
+        # 로컬 플레이어의 overlay 상태 확인
+        local_overlay_active = self._player_overlays.get(self.local_player_id, False)
+        if local_overlay_active: 
+            return "Click an ingredient card  |  ESC to cancel"
         st = self._near()
         if not st: return ""
         h = self.player.holding
@@ -845,11 +857,16 @@ class Game:
                 self._hurry_bgm_active = False
             return
 
-        if self.overlay.active:
+        # 로컬 플레이어의 overlay 상태 확인 (멀티플레이어에서 독립적)
+        local_overlay_active = self._player_overlays.get(self.local_player_id, False)
+        if local_overlay_active:
             if gi.overlay_click:
                 key = self.overlay.check_click(gi.overlay_click)
-                if key: self._pick_ingredient(key)
-                else: self.overlay.active = False
+                if key: 
+                    self._pick_ingredient(key)
+                else: 
+                    self._player_overlays[self.local_player_id] = False
+                    self.overlay.active = False
             # Gesture: finger_N highlights, thumbs_up confirms
             if gi.overlay_select is not None:
                 self.overlay.highlight_by_index(gi.overlay_select - 1)  # 1-based → 0-based
@@ -858,6 +875,7 @@ class Game:
                 if key:
                     self._pick_ingredient(key)
                 else:
+                    self._player_overlays[self.local_player_id] = False
                     self.overlay.active = False
             return
 
@@ -1067,8 +1085,11 @@ class Game:
 
         for s in self.stations: s.draw(screen, gy)
 
+        # 로컬 플레이어의 overlay 상태 확인
+        local_overlay_active = self._player_overlays.get(self.local_player_id, False)
+        
         ns = self._near()
-        if ns and not self.overlay.active:
+        if ns and not local_overlay_active:
             pygame.draw.rect(screen, (*C["yellow"], 200),
                              (ns.x - 2, ns.y - 2, ns.w + 4, ns.h + 4), 2, border_radius=8)
 
@@ -1079,11 +1100,13 @@ class Game:
         
         for p in self.popups: p.draw(screen)
 
-        self.overlay.draw(screen)
+        # 로컬 플레이어의 overlay만 표시 (멀티플레이어에서 독립적)
+        if local_overlay_active:
+            self.overlay.draw(screen)
         self.recipe_overlay.draw(screen)
 
         self._draw_hud(gw, gh)
-        if not self.overlay.active:
+        if not local_overlay_active:
             self._draw_recipes_panel()
 
         if self.state == "play":
@@ -1299,13 +1322,18 @@ class Game:
         """Process input for current self.player (extracted for multiplayer reuse)."""
         gw, gh = screen.get_size()
         
-        if self.overlay.active:
+        # 현재 처리 중인 플레이어의 overlay 상태 확인
+        pid = self.player.player_id
+        player_overlay_active = self._player_overlays.get(pid, False)
+        
+        if player_overlay_active:
             if gi.overlay_click:
                 key = self.overlay.check_click(gi.overlay_click)
                 if key:
                     self._pick_ingredient(key)
                 else:
-                    self.overlay.active = False
+                    self._player_overlays[pid] = False
+                    # 서버에서는 overlay.active를 직접 사용하지 않음
             if gi.overlay_select is not None:
                 self.overlay.highlight_by_index(gi.overlay_select - 1)
             if gi.overlay_confirm:
@@ -1313,7 +1341,7 @@ class Game:
                 if key:
                     self._pick_ingredient(key)
                 else:
-                    self.overlay.active = False
+                    self._player_overlays[pid] = False
             return
 
         if self._lock_mode:
@@ -1560,9 +1588,10 @@ def _main_solo(ui_mode: str, args):
         if game.use_gesture:
             hand_inputs, pipeline_frame = game.gesture_step()
             if hand_inputs:
+                local_overlay = game._player_overlays.get(game.local_player_id, False)
                 gesture_gi = hand_inputs_to_game_input(
                     hand_inputs,
-                    overlay_active=game.overlay.active,
+                    overlay_active=local_overlay,
                 )
 
         for event in pygame.event.get():
@@ -1601,7 +1630,8 @@ def _main_solo(ui_mode: str, args):
                     if game.recipe_overlay.active:
                         game.recipe_overlay.active = False
                         game.audio.play("page_flip")
-                    elif game.overlay.active:
+                    elif game._player_overlays.get(game.local_player_id, False):
+                        game._player_overlays[game.local_player_id] = False
                         game.overlay.active = False
                     elif game.state == "play":
                         game.state = "paused"
@@ -1842,7 +1872,8 @@ def _main_multiplayer(ui_mode: str, args):
             if game.use_gesture:
                 hand_inputs, pipeline_frame = game.gesture_step()
                 if hand_inputs:
-                    gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=game.overlay.active)
+                    local_overlay = game._player_overlays.get(game.local_player_id, False)
+                    gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=local_overlay)
 
             _SLOT_KEYS = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3, pygame.K_4: 4, pygame.K_5: 5}
             for event in pygame.event.get():
@@ -1918,7 +1949,8 @@ def _main_multiplayer(ui_mode: str, args):
             if game.use_gesture:
                 hand_inputs, pipeline_frame = game.gesture_step()
                 if hand_inputs:
-                    gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=game.overlay.active)
+                    local_overlay = game._player_overlays.get(game.local_player_id, False)
+                    gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=local_overlay)
 
             _SLOT_KEYS = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3, pygame.K_4: 4, pygame.K_5: 5}
             for event in pygame.event.get():
