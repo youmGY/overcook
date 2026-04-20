@@ -5,8 +5,6 @@ import threading
 from dataclasses import dataclass
 
 import cv2
-import numpy as np
-
 
 @dataclass(frozen=True)
 class CameraConfig:
@@ -19,10 +17,21 @@ class CameraConfig:
 
 def _open_camera_blocking(config: CameraConfig) -> cv2.VideoCapture:
     """Open camera synchronously. Uses DirectShow on Windows to avoid MSMF hangs."""
-    backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+    system = platform.system()
+    if system == "Windows":
+        backend = cv2.CAP_DSHOW
+    elif system == "Linux":
+        backend = cv2.CAP_V4L2
+    else:
+        backend = cv2.CAP_ANY
     cap = cv2.VideoCapture(config.device_index, backend)
     if not cap.isOpened():
         raise RuntimeError(f"Failed to open camera device {config.device_index}")
+
+    # Request low-latency capture path before frame format/size changes.
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    # Many UVC webcams on Linux/Windows deliver higher FPS with MJPG.
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.height)
@@ -65,7 +74,7 @@ class ThreadedCamera:
 
     def __init__(self, cap: cv2.VideoCapture) -> None:
         self._cap = cap
-        self._frame: np.ndarray | None = None
+        self._frame = None
         self._ok = False
         self._lock = threading.Lock()
         self._running = True

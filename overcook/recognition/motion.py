@@ -17,10 +17,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from time import perf_counter
+from itertools import islice
 from typing import Deque, Dict, Optional, Tuple
-
-import numpy as np
 
 # Motion labels
 MOTION_CHOP = "chop_motion"
@@ -30,8 +28,9 @@ MOTION_STIR = "stir_motion"
 #  Sliding-window oscillation parameters (from gshan branch)
 # ---------------------------------------------------------------------------
 
-# Minimum direction reversals with sufficient amplitude for chop/stir
-_OSCILLATION_MIN = 2
+# Minimum direction reversals with sufficient amplitude for chop/stir.
+# 1 means one-way reversal (편도) is enough to count.
+_OSCILLATION_MIN = 1
 
 # Minimum amplitude per reversal (normalized coords)
 _OSCILLATION_AMP_X = 0.03      # stir (horizontal) — wider FOV, normal threshold
@@ -51,11 +50,8 @@ _SPEED_WINDOW = 5
 # Chop vs stir axis dominance ratio
 _AXIS_DOMINANCE = 1.3
 
-# Dual-window sizes for oscillation detection:
-# Short window: fast reaction to transitions and fast movements (~0.5s)
-_WIN_SHORT = 15
-# Long window: catches slow movements that need more context (~1.0s)
-_WIN_LONG = 30
+# Recent amplitude window used for confidence and gate checks.
+_AMP_WINDOW = 30
 
 # Gap filling: max frames to extrapolate wrist position when hand is absent.
 # With fist/side-view, MediaPipe drops detection for many consecutive frames.
@@ -75,6 +71,13 @@ _HOLD_FRAMES = 10
 # Maximum buffer length (frames) — prevents unbounded growth
 _BUFFER_MAXLEN = 120
 
+# Design FPS: all frame-count constants above were tuned for this rate.
+# At runtime, constants are scaled by (actual_fps / _DESIGN_FPS).
+_DESIGN_FPS = 30
+
+# FPS must exceed this to be trusted (avoids instability during startup).
+_FPS_WARMUP_MIN = 8
+
 
 @dataclass
 class MotionDebug:
@@ -87,10 +90,6 @@ class MotionDebug:
     # Delta this frame (new strokes since last frame)
     chop_delta: int = 0
     stir_delta: int = 0
-
-    # Full-buffer amplitudes
-    y_amp: float = 0.0
-    x_amp: float = 0.0
 
     # Recent-frames amplitudes (used for actual gating)
     r_y_amp: float = 0.0
@@ -109,50 +108,29 @@ class MotionDebug:
     hold_counter: int = 0
 
 
-# ---------------------------------------------------------------------------
-#  Oscillation counter (ported from gshan branch)
-# ---------------------------------------------------------------------------
+def _recent_amplitude(buf: Deque[float], n: int) -> float:
+    """Return max-min over the most recent ``n`` samples."""
+    if not buf:
+        return 0.0
+    it = islice(reversed(buf), n)
+    first = next(it, None)
+    if first is None:
+        return 0.0
+    lo = hi = first
+    for v in it:
+        if v < lo:
+            lo = v
+        elif v > hi:
+            hi = v
+    return hi - lo
 
-def _count_oscillations(buf: np.ndarray, amp_threshold: float) -> int:
-    """Count direction reversals with sufficient amplitude in a coordinate
-    time series, after moving-average smoothing.
 
-    A reversal is counted when direction changes and the distance from the
-    previous extreme point exceeds *amp_threshold*.
-    """
-    n = len(buf)
-    if n < 6:
-        return 0
-
-    # Fixed-size smoothing kernel
-    k = min(5, n // 2)
-    if k < 2:
-        k = 2
-    s = np.convolve(buf, np.ones(k) / k, mode="valid")
-
-    if len(s) < 3:
-        return 0
-
-    changes = 0
-    last_dir = 0
-    last_extreme = float(s[0])
-
-    for i in range(1, len(s)):
-        diff = float(s[i]) - float(s[i - 1])
-        if abs(diff) < 1e-5:
-            continue
-        cur_dir = 1 if diff > 0 else -1
-
-        if last_dir != 0 and cur_dir != last_dir:
-            extreme = float(s[i - 1])  # direction change point = actual extreme
-            if abs(extreme - last_extreme) >= amp_threshold:
-                changes += 1
-            # Always update reference to prevent stale extreme
-            last_extreme = extreme
-
-        last_dir = cur_dir
-
-    return changes
+def _push_speed(st: "_HandMotionState", speed: float) -> None:
+    if len(st._speed_buf) == st._speed_buf.maxlen:
+        st._speed_sum -= st._speed_buf[0]
+    st._speed_buf.append(speed)
+    st._speed_sum += speed
+    st.avg_speed = st._speed_sum / len(st._speed_buf)
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +146,7 @@ class _HandMotionState:
     wrist_absent: int = 999
     wrist_speed: float = 0.0
     _speed_buf: Deque[float] = field(default_factory=lambda: deque(maxlen=_SPEED_WINDOW))
+    _speed_sum: float = 0.0
     avg_speed: float = 0.0
     prev_wrist: Optional[Tuple[float, float]] = None
     still_counter: int = 0
@@ -207,7 +186,8 @@ class MotionDetector:
     def update(
         self,
         hand_wrists: Optional[Dict[str, Optional[Tuple[float, float]]]] = None,
-        now: Optional[float] = None,
+        *,
+        fps: Optional[float] = None,
     ) -> Dict[str, Tuple[Optional[str], float, int]]:
         """Feed per-hand wrist positions and detect chop/stir.
 
@@ -220,9 +200,6 @@ class MotionDetector:
                      "right": (...)}
             count = new motion strokes this frame (0, 1, or rarely 2+).
         """
-        if now is None:
-            now = perf_counter()
-
         if hand_wrists is None:
             hand_wrists = {}
 
@@ -230,6 +207,21 @@ class MotionDetector:
             "left": (None, 0.0, 0),
             "right": (None, 0.0, 0),
         }
+
+        # --- FPS-adaptive scaling ---
+        # Use design FPS until actual FPS is stable (avoids startup glitches).
+        fps_eff = fps if (fps is not None and fps >= _FPS_WARMUP_MIN) else _DESIGN_FPS
+        scale = fps_eff / _DESIGN_FPS  # <1 at low FPS
+
+        amp_window = max(8, round(_AMP_WINDOW * scale))
+        still_reset = max(6, round(_STILL_RESET_FRAMES * scale))
+        hold       = max(3, round(_HOLD_FRAMES * scale))
+        cache_max  = max(3, round(_HAND_CACHE_MAX * scale))
+
+        # Per-frame displacement is larger at low FPS for the same physical
+        # speed, so scale speed thresholds inversely.
+        active_speed_thresh = _MIN_ACTIVE_SPEED / scale
+        still_speed_thresh  = _STILL_SPEED_MAX / scale
 
         # --- per-hand chop/stir detection via oscillation counting ---
         for hand in ("left", "right"):
@@ -252,8 +244,7 @@ class MotionDetector:
                     st.wrist_speed = 0.0
                     st.last_wrist_vel = (0.0, 0.0)
                 # Smoothed average speed over recent frames
-                st._speed_buf.append(st.wrist_speed)
-                st.avg_speed = sum(st._speed_buf) / len(st._speed_buf)
+                _push_speed(st, st.wrist_speed)
                 st.prev_wrist = (wx, wy)
                 st.last_wrist_pos = (wx, wy)
                 st.wrist_absent = 0
@@ -261,10 +252,11 @@ class MotionDetector:
                 # Velocity-based extrapolation: predict next position from
                 # last known position + velocity.  This preserves the oscillation
                 # pattern during brief landmark dropouts instead of flatline.
-                if st.last_wrist_pos and st.wrist_absent < _HAND_CACHE_MAX:
+                if st.last_wrist_pos and st.wrist_absent < cache_max:
                     vx, vy = st.last_wrist_vel
-                    # Dampen velocity over consecutive missing frames
-                    damp = 0.7 ** (st.wrist_absent + 1)
+                    # Dampen velocity over consecutive missing frames.
+                    # Scale exponent so damping is time-consistent across FPS.
+                    damp = 0.7 ** ((st.wrist_absent + 1) / scale)
                     pred_x = st.last_wrist_pos[0] + vx * damp
                     pred_y = st.last_wrist_pos[1] + vy * damp
                     # Clamp to valid normalized range
@@ -275,14 +267,13 @@ class MotionDetector:
                     st.last_wrist_pos = (pred_x, pred_y)
                 st.wrist_absent += 1
                 st.wrist_speed = 0.0
-                st._speed_buf.append(0.0)
-                st.avg_speed = sum(st._speed_buf) / len(st._speed_buf)
+                _push_speed(st, 0.0)
                 st.prev_wrist = None
 
             # Still detection: reset buffers when hand stops moving
-            if wrist_pos is not None and st.wrist_speed < _STILL_SPEED_MAX:
+            if wrist_pos is not None and st.wrist_speed < still_speed_thresh:
                 st.still_counter += 1
-                if st.still_counter >= _STILL_RESET_FRAMES:
+                if st.still_counter >= still_reset:
                     st.wy.clear()
                     st.wx.clear()
                     st._ema_y = None
@@ -290,96 +281,18 @@ class MotionDetector:
                     st._dir_y = st._dir_x = 0
                     st._rev_chop = st._rev_stir = 0
                     st._prev_rev_chop = st._prev_rev_stir = 0
+                    st._speed_buf.clear()
+                    st._speed_sum = 0.0
+                    st.avg_speed = 0.0
             else:
                 st.still_counter = 0
-
-            # Convert to numpy once
-            wy_arr = np.array(st.wy, dtype=np.float32) if st.wy else np.empty(0, dtype=np.float32)
-            wx_arr = np.array(st.wx, dtype=np.float32) if st.wx else np.empty(0, dtype=np.float32)
-
-            # ── Dual-window oscillation detection ──
-            # Short window: responsive to fast movement and quick transitions
-            # Long window: catches slow oscillations that need more context
-            # If EITHER fires → motion is detected.
-            sn = min(len(wy_arr), _WIN_SHORT)
-            ln = min(len(wy_arr), _WIN_LONG)
-            wy_short = wy_arr[-sn:] if sn > 0 else wy_arr
-            wx_short = wx_arr[-sn:] if sn > 0 else wx_arr
-            wy_long = wy_arr[-ln:] if ln > 0 else wy_arr
-            wx_long = wx_arr[-ln:] if ln > 0 else wx_arr
-
-            # Short window
-            s_y_amp = float(wy_short.max() - wy_short.min()) if len(wy_short) > 0 else 0.0
-            s_x_amp = float(wx_short.max() - wx_short.min()) if len(wx_short) > 0 else 0.0
-            s_chop_osc = _count_oscillations(wy_short, _OSCILLATION_AMP_Y)
-            s_stir_osc = _count_oscillations(wx_short, _OSCILLATION_AMP_X)
-
-            # Long window
-            l_y_amp = float(wy_long.max() - wy_long.min()) if len(wy_long) > 0 else 0.0
-            l_x_amp = float(wx_long.max() - wx_long.min()) if len(wx_long) > 0 else 0.0
-            l_chop_osc = _count_oscillations(wy_long, _OSCILLATION_AMP_Y)
-            l_stir_osc = _count_oscillations(wx_long, _OSCILLATION_AMP_X)
-
-            # Best of both: use whichever window gives better detection
-            chop_osc = max(s_chop_osc, l_chop_osc)
-            stir_osc = max(s_stir_osc, l_stir_osc)
-            r_y_amp = max(s_y_amp, l_y_amp)
-            r_x_amp = max(s_x_amp, l_x_amp)
-
-            # Very-recent activity check (~8 frames): user must be moving NOW
-            _VERY_RECENT = 8
-            vr_n = min(len(wy_arr), _VERY_RECENT)
-            if vr_n >= 3:
-                vr_y_amp = float(wy_arr[-vr_n:].max() - wy_arr[-vr_n:].min())
-                vr_x_amp = float(wx_arr[-vr_n:].max() - wx_arr[-vr_n:].min())
-            else:
-                vr_y_amp = vr_x_amp = 0.0
-
-            # Chop: NO speed gate — hand naturally has speed=0 at reversal points.
-            # Only require oscillation count + amplitude.
-            is_chop = (
-                (chop_osc >= _OSCILLATION_MIN)
-                or (r_y_amp >= _OSCILLATION_AMP_LARGE_Y and chop_osc >= 1)
-            ) and r_y_amp >= _OSCILLATION_AMP_Y
-
-            # Stir: speed gate helps filter tremor on x-axis
-            moving = st.avg_speed >= _MIN_ACTIVE_SPEED
-            is_stir = moving and (
-                (stir_osc >= _OSCILLATION_MIN)
-                or (r_x_amp >= _OSCILLATION_AMP_LARGE_X and stir_osc >= 1)
-            ) and r_x_amp >= _OSCILLATION_AMP_X
-
-            # Determine raw detection with fallback for ambiguous diagonal motion
-            raw = None
-            if is_chop and is_stir:
-                if r_y_amp > r_x_amp * _AXIS_DOMINANCE:
-                    raw = MOTION_CHOP
-                elif r_x_amp > r_y_amp * _AXIS_DOMINANCE:
-                    raw = MOTION_STIR
-                else:
-                    # Ambiguous diagonal — pick the axis with more oscillations
-                    raw = MOTION_CHOP if chop_osc >= stir_osc else MOTION_STIR
-            elif is_chop:
-                raw = MOTION_CHOP
-            elif is_stir:
-                raw = MOTION_STIR
-
-            # Short hold: maintain detection for a few frames after raw goes idle.
-            # This bridges brief gate failures at direction-reversal points.
-            if raw is not None:
-                st.held_gesture = raw
-                st.hold_counter = _HOLD_FRAMES
-                output = raw
-            elif st.hold_counter > 0:
-                st.hold_counter -= 1
-                output = st.held_gesture
-            else:
-                output = None
 
             # --- Incremental reversal counting (O(1), buffer-independent) ---
             # EMA-smooth the raw coordinates to filter jitter, then detect
             # direction reversals with sufficient amplitude → 1 reversal = 1 count.
-            _EMA_ALPHA = 0.35
+            # Scale alpha so EMA time-constant stays consistent across FPS.
+            _EMA_ALPHA_BASE = 0.35
+            ema_alpha = 1.0 - (1.0 - _EMA_ALPHA_BASE) ** (1.0 / scale)
             if wrist_pos is not None:
                 wx_raw, wy_raw = wrist_pos
                 if st._ema_y is None:
@@ -388,8 +301,8 @@ class MotionDetector:
                     st._extreme_y = wy_raw
                     st._extreme_x = wx_raw
                 else:
-                    st._ema_y = _EMA_ALPHA * wy_raw + (1 - _EMA_ALPHA) * st._ema_y
-                    st._ema_x = _EMA_ALPHA * wx_raw + (1 - _EMA_ALPHA) * st._ema_x
+                    st._ema_y = ema_alpha * wy_raw + (1 - ema_alpha) * st._ema_y
+                    st._ema_x = ema_alpha * wx_raw + (1 - ema_alpha) * st._ema_x
 
                 # Y-axis (chop) reversal detection
                 if st._dir_y != 0:
@@ -424,6 +337,52 @@ class MotionDetector:
                         st._dir_x = 1 if st._ema_x > st.wx[-2] else -1
                         st._extreme_x = st._ema_x
 
+            # Recent amplitude on buffered coordinates (for gate + confidence)
+            r_y_amp = _recent_amplitude(st.wy, amp_window)
+            r_x_amp = _recent_amplitude(st.wx, amp_window)
+
+            # Use incremental reversal totals as oscillation counters.
+            chop_osc = st._rev_chop
+            stir_osc = st._rev_stir
+
+            # Chop: NO speed gate — hand naturally has speed=0 at reversal points.
+            is_chop = (
+                (chop_osc >= _OSCILLATION_MIN)
+                or (r_y_amp >= _OSCILLATION_AMP_LARGE_Y and chop_osc >= 1)
+            ) and r_y_amp >= _OSCILLATION_AMP_Y
+
+            # Stir: keep speed gate to reject horizontal tremor.
+            moving = st.avg_speed >= active_speed_thresh
+            is_stir = moving and (
+                (stir_osc >= _OSCILLATION_MIN)
+                or (r_x_amp >= _OSCILLATION_AMP_LARGE_X and stir_osc >= 1)
+            ) and r_x_amp >= _OSCILLATION_AMP_X
+
+            # Determine raw detection with fallback for ambiguous diagonal motion.
+            raw = None
+            if is_chop and is_stir:
+                if r_y_amp > r_x_amp * _AXIS_DOMINANCE:
+                    raw = MOTION_CHOP
+                elif r_x_amp > r_y_amp * _AXIS_DOMINANCE:
+                    raw = MOTION_STIR
+                else:
+                    raw = MOTION_CHOP if chop_osc >= stir_osc else MOTION_STIR
+            elif is_chop:
+                raw = MOTION_CHOP
+            elif is_stir:
+                raw = MOTION_STIR
+
+            # Short hold: maintain detection for a few frames after raw goes idle.
+            if raw is not None:
+                st.held_gesture = raw
+                st.hold_counter = hold
+                output = raw
+            elif st.hold_counter > 0:
+                st.hold_counter -= 1
+                output = st.held_gesture
+            else:
+                output = None
+
             # Delta: new reversals this frame
             chop_new = st._rev_chop - st._prev_rev_chop
             stir_new = st._rev_stir - st._prev_rev_stir
@@ -435,20 +394,17 @@ class MotionDetector:
             active_stir_count = stir_new if output == MOTION_STIR else 0
 
             # Populate debug
-            self.debug[hand] = MotionDebug(
-                chop_osc=chop_osc,
-                stir_osc=stir_osc,
-                chop_delta=active_chop_count,
-                stir_delta=active_stir_count,
-                y_amp=r_y_amp,
-                x_amp=r_x_amp,
-                r_y_amp=r_y_amp,
-                r_x_amp=r_x_amp,
-                wrist_speed=st.wrist_speed,
-                still_counter=st.still_counter,
-                raw=raw or "idle",
-                hold_counter=st.hold_counter,
-            )
+            dbg = self.debug[hand]
+            dbg.chop_osc = chop_osc
+            dbg.stir_osc = stir_osc
+            dbg.chop_delta = active_chop_count
+            dbg.stir_delta = active_stir_count
+            dbg.r_y_amp = r_y_amp
+            dbg.r_x_amp = r_x_amp
+            dbg.wrist_speed = st.wrist_speed
+            dbg.still_counter = st.still_counter
+            dbg.raw = raw or "idle"
+            dbg.hold_counter = st.hold_counter
 
             if output is not None:
                 amp_ref = _OSCILLATION_AMP_Y if output == MOTION_CHOP else _OSCILLATION_AMP_X

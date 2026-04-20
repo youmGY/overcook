@@ -29,9 +29,59 @@ from overcook.recognition.motion import MotionDetector
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Model-only hand/gesture/motion viewer")
     p.add_argument("--device", type=int, default=0, help="Camera index")
+    p.add_argument("--fps", type=int, default=30, help="Requested camera FPS (e.g., 30/60)")
     p.add_argument("--flip", action="store_true", default=True, help="Mirror horizontally")
     p.add_argument("--no-flip", dest="flip", action="store_false")
     p.add_argument("--max-hands", type=int, default=2, choices=[1, 2])
+    p.add_argument(
+        "--infer-interval",
+        type=int,
+        default=1,
+        help="Run hand landmark inference every N frames (1=every frame)",
+    )
+    p.add_argument(
+        "--input-scale",
+        type=float,
+        default=1.0,
+        help="Scale factor for hand detector input (0.5~1.0)",
+    )
+    p.add_argument(
+        "--min-det",
+        type=float,
+        default=0.2,
+        help="Min hand detection confidence (lower can help fast reacquisition)",
+    )
+    p.add_argument(
+        "--min-track",
+        type=float,
+        default=0.2,
+        help="Min hand tracking confidence (lower can reduce dropouts)",
+    )
+    p.add_argument(
+        "--fast-motion",
+        action="store_true",
+        help="Preset for rapid chop/stir: prioritize hand capture over CPU savings",
+    )
+    p.add_argument(
+        "--clahe",
+        action="store_true",
+        help="Apply CLAHE brightness normalization before inference",
+    )
+    p.add_argument("--clahe-clip", type=float, default=2.0, help="CLAHE clip limit")
+    p.add_argument("--clahe-grid", type=int, default=8, help="CLAHE tile grid size")
+    p.add_argument("--low-res", action="store_true", help="Use 320x240 for higher FPS")
+    p.add_argument(
+        "--draw-landmarks",
+        action="store_true",
+        default=True,
+        help="Draw hand skeleton overlay (disable for higher FPS)",
+    )
+    p.add_argument("--no-draw-landmarks", dest="draw_landmarks", action="store_false")
+    p.add_argument(
+        "--minimal-overlay",
+        action="store_true",
+        help="Draw only FPS text (skip heavy debug panel)",
+    )
     return p.parse_args()
 
 
@@ -40,12 +90,38 @@ def _put(frame, text, x, y, color=(255, 255, 255), scale=0.5):
     cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
 
 
+def _apply_clahe(frame_bgr: np.ndarray, clip_limit: float, grid: int) -> np.ndarray:
+    lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=max(0.1, clip_limit), tileGridSize=(max(2, grid), max(2, grid)))
+    l2 = clahe.apply(l)
+    return cv2.cvtColor(cv2.merge((l2, a, b)), cv2.COLOR_LAB2BGR)
+
+
 def main() -> None:
     args = parse_args()
 
-    cfg = CameraConfig(device_index=args.device, width=640, height=480, fps=30)
+    if args.fast_motion:
+        args.max_hands = 1
+        args.infer_interval = 1
+        args.input_scale = 1.0
+        args.min_det = min(args.min_det, 0.15)
+        args.min_track = min(args.min_track, 0.15)
+        if args.fps < 60:
+            args.fps = 60
+
+    width, height = (320, 240) if args.low_res else (640, 480)
+    cfg = CameraConfig(device_index=args.device, width=width, height=height, fps=max(1, args.fps))
     cap = open_camera(cfg)
-    tracker = HandTracker(HandTrackerConfig(max_num_hands=args.max_hands))
+    tracker = HandTracker(
+        HandTrackerConfig(
+            max_num_hands=args.max_hands,
+            min_detection_confidence=max(0.01, min(1.0, args.min_det)),
+            min_tracking_confidence=max(0.01, min(1.0, args.min_track)),
+            detect_every_n_frames=max(1, args.infer_interval),
+            input_scale=max(0.1, min(1.0, args.input_scale)),
+        )
+    )
     splitter = HandSplitter()
     gesture_dnn = GestureClassifierDNN()
     motion = MotionDetector()
@@ -66,10 +142,12 @@ def main() -> None:
         if args.flip:
             frame = cv2.flip(frame, 1)
 
+        model_frame = _apply_clahe(frame, args.clahe_clip, args.clahe_grid) if args.clahe else frame
+
         h, w = frame.shape[:2]
 
         # Hand detection
-        result = tracker.process(frame, draw=True)
+        result = tracker.process(model_frame, draw=args.draw_landmarks)
         hands = splitter.update(result, flipped=args.flip)
 
         # Per-hand gesture + wrist
@@ -119,6 +197,18 @@ def main() -> None:
         y_off = 24
         _put(frame, f"FPS: {tracker.fps:.0f}", 10, y_off, (0, 255, 0), 0.6)
         y_off += 28
+
+        if args.minimal_overlay:
+            cv2.imshow("Model Output Viewer", frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):
+                break
+            if key == ord("r"):
+                for hid in ("left", "right"):
+                    total_chop[hid] = total_stir[hid] = 0
+                    combo_type[hid] = None
+                    combo_count[hid] = 0
+            continue
 
         for hand_id in ("left", "right"):
             color = (255, 200, 100) if hand_id == "left" else (100, 200, 255)

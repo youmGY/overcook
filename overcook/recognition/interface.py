@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
+import cv2
 
 from .camera import CameraConfig, ThreadedCamera, open_camera
 from .gesture import (
@@ -17,6 +17,23 @@ from .gesture import (
 from .splitter import HandSplitter
 from .hand_tracker import HandTracker, HandTrackerConfig
 from .motion import MotionDebug, MotionDetector
+
+
+# Frames to keep the last stable gesture when landmarks disappear briefly.
+_MISSING_GESTURE_HOLD_FRAMES = 10
+
+
+def _count_from_label(label: str, fallback: int = 0) -> int:
+    if label.startswith("finger_"):
+        try:
+            return int(label.split("_")[1])
+        except (IndexError, ValueError):
+            return fallback
+    if label == LABEL_THUMBS_UP:
+        return 1
+    if label == LABEL_UNKNOWN:
+        return 0
+    return fallback
 
 
 @dataclass
@@ -67,6 +84,12 @@ class RecognitionPipeline:
         )
 
         self._last_frame = None
+        self._missing_hold: Dict[str, int] = {"left": 0, "right": 0}
+        self._last_stable_label: Dict[str, str] = {
+            "left": LABEL_UNKNOWN,
+            "right": LABEL_UNKNOWN,
+        }
+        self._last_stable_count: Dict[str, int] = {"left": 0, "right": 0}
 
     @property
     def last_frame(self):
@@ -118,8 +141,6 @@ class RecognitionPipeline:
         if not ok:
             return []
         if self.flip:
-            import cv2
-
             frame = cv2.flip(frame, 1)
 
         hand_results = self._hands.process(frame, draw=draw_overlay)
@@ -133,19 +154,33 @@ class RecognitionPipeline:
         for hand_id in ("left", "right"):
             state = hands[hand_id]
             if state.landmarks is None:
-                label, _ = state.debouncer.update(LABEL_UNKNOWN)
-                per_hand_label[hand_id] = label
-                per_hand_count[hand_id] = 0
+                # Briefly keep the last stable gesture across landmark dropouts
+                # (common with fist and side-view poses).
+                if (
+                    self._missing_hold[hand_id] < _MISSING_GESTURE_HOLD_FRAMES
+                    and self._last_stable_label[hand_id] != LABEL_UNKNOWN
+                ):
+                    per_hand_label[hand_id] = self._last_stable_label[hand_id]
+                    per_hand_count[hand_id] = self._last_stable_count[hand_id]
+                else:
+                    label, _ = state.debouncer.update(LABEL_UNKNOWN)
+                    per_hand_label[hand_id] = label
+                    per_hand_count[hand_id] = 0
                 per_hand_confirmed[hand_id] = False
+                self._missing_hold[hand_id] += 1
                 continue
 
+            self._missing_hold[hand_id] = 0
             lm_np = landmarks_to_numpy(state.landmarks)
             raw_label, _conf, count = self._gesture_dnn.predict(lm_np)
             label, just_confirmed = state.debouncer.update(raw_label)
 
             per_hand_label[hand_id] = label
-            per_hand_count[hand_id] = count
+            per_hand_count[hand_id] = _count_from_label(label, fallback=count)
             per_hand_confirmed[hand_id] = just_confirmed
+            if label != LABEL_UNKNOWN:
+                self._last_stable_label[hand_id] = label
+                self._last_stable_count[hand_id] = per_hand_count[hand_id]
 
         # Extract hand centroid for chop/stir detection.
         # Using the mean of ALL 21 landmarks — robust to any hand orientation.
@@ -155,16 +190,20 @@ class RecognitionPipeline:
         for hand_id in ("left", "right"):
             state = hands[hand_id]
             if state.landmarks is not None:
-                xs = [lm.x for lm in state.landmarks]
-                ys = [lm.y for lm in state.landmarks]
-                cx = sum(xs) / len(xs)
-                cy = sum(ys) / len(ys)
+                sx = 0.0
+                sy = 0.0
+                n = len(state.landmarks)
+                for lm in state.landmarks:
+                    sx += lm.x
+                    sy += lm.y
+                cx = sx / n
+                cy = sy / n
                 hand_wrists[hand_id] = (cx, cy)
             else:
                 hand_wrists[hand_id] = None
 
         # Motion detection (chop / stir)
-        motion_results = self._motion.update(hand_wrists)
+        motion_results = self._motion.update(hand_wrists, fps=self._hands.fps)
 
         outputs = self._build_hand_inputs(
             hands, per_hand_label, per_hand_count, per_hand_confirmed, motion_results,

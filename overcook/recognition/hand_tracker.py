@@ -29,6 +29,8 @@ class HandTrackerConfig:
     max_num_hands: int = 2
     min_detection_confidence: float = 0.2
     min_tracking_confidence: float = 0.2
+    detect_every_n_frames: int = 1
+    input_scale: float = 1.0
     model_complexity: int = 0  # kept for compatibility, not used by tasks API
     model_path: str = _DEFAULT_MODEL
 
@@ -51,6 +53,9 @@ class HandTracker:
         self._prev_ts = perf_counter()
         self._frame_ts_ms = 0
         self._fps = 0.0
+        self._frame_index = 0
+        self._cached_result = None
+        self._adapter = _TasksResultAdapter(None)
 
     @property
     def fps(self) -> float:
@@ -66,12 +71,28 @@ class HandTracker:
           .multi_hand_landmarks  — alias for hand_landmarks
           .multi_handedness      — alias (adapted to old format)
         """
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        self._frame_ts_ms += 33  # ~30fps monotonic timestamp
-        result = self._detector.detect_for_video(mp_image, self._frame_ts_ms)
+        self._frame_index += 1
+        detect_every = max(1, int(self.config.detect_every_n_frames))
+        run_detect = self._cached_result is None or (self._frame_index % detect_every == 0)
 
-        if draw and result.hand_landmarks:
+        if run_detect:
+            scale = float(self.config.input_scale)
+            if 0.1 <= scale < 1.0:
+                h, w = frame_bgr.shape[:2]
+                sw = max(64, int(w * scale))
+                sh = max(64, int(h * scale))
+                frame_for_detect = cv2.resize(frame_bgr, (sw, sh), interpolation=cv2.INTER_LINEAR)
+            else:
+                frame_for_detect = frame_bgr
+
+            rgb = cv2.cvtColor(frame_for_detect, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            self._frame_ts_ms += 33  # monotonic timestamp for VIDEO mode
+            self._cached_result = self._detector.detect_for_video(mp_image, self._frame_ts_ms)
+
+        result = self._cached_result
+
+        if draw and result is not None and result.hand_landmarks:
             h, w = frame_bgr.shape[:2]
             for hand_lms in result.hand_landmarks:
                 pts = [(int(lm.x * w), int(lm.y * h)) for lm in hand_lms]
@@ -86,7 +107,8 @@ class HandTracker:
         if dt > 0:
             self._fps = 0.9 * self._fps + 0.1 * (1.0 / dt)
 
-        return _TasksResultAdapter(result)
+        self._adapter.set_result(result)
+        return self._adapter
 
     def draw_debug_text(self, frame_bgr) -> None:
         cv2.putText(
@@ -122,6 +144,9 @@ class _TasksResultAdapter:
     by HandSplitter and the rest of the pipeline."""
 
     def __init__(self, result) -> None:
+        self._result = result
+
+    def set_result(self, result) -> None:
         self._result = result
 
     @property
