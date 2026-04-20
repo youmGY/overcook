@@ -49,7 +49,7 @@ _LABEL_TO_COUNT = {
 
 _DEFAULT_ONNX = os.path.join(os.path.dirname(__file__), "gesture_mlp.onnx")
 
-# ---- feature extraction (56-dim normalized coordinates) ----
+# ---- feature extraction (60-dim: normalized coordinates + thumb cosines) ----
 
 
 def _normalize_landmarks(lm: np.ndarray, is_left: bool) -> np.ndarray | None:
@@ -75,8 +75,19 @@ def _normalize_landmarks(lm: np.ndarray, is_left: bool) -> np.ndarray | None:
     return lm.astype(np.float32)
 
 
+def _cos_angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    """Cosine of angle at vertex b for points a-b-c."""
+    v1 = a - b
+    v2 = c - b
+    n1 = np.linalg.norm(v1)
+    n2 = np.linalg.norm(v2)
+    if n1 < 1e-8 or n2 < 1e-8:
+        return 0.0
+    return float(np.dot(v1, v2) / (n1 * n2))
+
+
 def _landmarks_to_features(lm_norm: np.ndarray) -> np.ndarray:
-    """Normalized (21,3) → 56-dim feature vector."""
+    """Normalized (21,3) → 60-dim feature vector."""
     feats = []
     for i in range(21):
         if i == 0:
@@ -88,11 +99,16 @@ def _landmarks_to_features(lm_norm: np.ndarray) -> np.ndarray:
             feats.append(lm_norm[i, 1])
         else:
             feats.extend(lm_norm[i].tolist())
+    # 4 thumb angle cosines
+    feats.append(_cos_angle(lm_norm[1], lm_norm[0], lm_norm[5]))  # spread
+    feats.append(_cos_angle(lm_norm[0], lm_norm[1], lm_norm[2]))  # CMC
+    feats.append(_cos_angle(lm_norm[1], lm_norm[2], lm_norm[3]))  # MCP
+    feats.append(_cos_angle(lm_norm[2], lm_norm[3], lm_norm[4]))  # IP
     return np.array(feats, dtype=np.float32)
 
 
 def extract_features(landmarks_np: np.ndarray, is_left: bool = False) -> np.ndarray | None:
-    """Extract 56-dim normalized coordinate features. Returns None on failure."""
+    """Extract 60-dim features (normalized coords + thumb cosines). Returns None on failure."""
     lm_norm = _normalize_landmarks(landmarks_np, is_left)
     if lm_norm is None:
         return None
