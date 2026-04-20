@@ -183,6 +183,7 @@ class Game:
         self._mp_player_names: dict = {}  # pid → name (from lobby)
         self._lock_modes: dict = {}  # pid → (mode, station) for multiplayer
         self._player_overlays: dict = {}  # pid → overlay active state (독립적 팬트리)
+        self._station_locks: dict = {}  # station_idx → player_id (조리대 사용권)
 
         if self.use_gesture:
             self._init_pipeline(
@@ -332,6 +333,8 @@ class Game:
         self._lock_station = None
         # State-gated motion counting: avoid consuming stale motion on lock entry.
         self._motion_gate_ready = {"chop": False, "stir": False}
+        # Station locks (멀티플레이어 조리대 선착순 사용)
+        self._station_locks = {}  # station_idx → player_id
 
     def _gy(self):
         _, gh = screen.get_size()
@@ -352,6 +355,19 @@ class Game:
         for i, k in enumerate(kinds):
             sx = pad + i * (Station.SW + gap)
             self.stations.append(Station(k, sx, sy))
+
+    def _get_station_idx(self, station) -> int:
+        \"\"\"Get station index from station object.\"\"\"\n        try:
+            return self.stations.index(station)
+        except ValueError:
+            return -1
+
+    def _can_use_station(self, station, player_id: int) -> bool:
+        \"\"\"Check if player can use this station (멀티플레이어 조리대 락 체크).\"\"\"\n        if not self.multiplayer:\n            return True  # Solo mode: always available\n        \n        st_idx = self._get_station_idx(station)\n        if st_idx == -1:\n            return True\n        \n        # Station not locked or locked by this player\n        locked_by = self._station_locks.get(st_idx)\n        return locked_by is None or locked_by == player_id
+
+    def _lock_station(self, station, player_id: int):\n        \"\"\"Lock station for exclusive use by player.\"\"\"\n        if not self.multiplayer:\n            return\n        st_idx = self._get_station_idx(station)\n        if st_idx >= 0:\n            self._station_locks[st_idx] = player_id
+
+    def _unlock_station(self, station):\n        \"\"\"Unlock station.\"\"\"\n        if not self.multiplayer:\n            return\n        st_idx = self._get_station_idx(station)\n        if st_idx >= 0 and st_idx in self._station_locks:\n            del self._station_locks[st_idx]
 
     def _recipe_panel_rect(self):
         gw, gh = screen.get_size()
@@ -535,17 +551,29 @@ class Game:
 
     def _act_ing(self, _st):
         if not self.player.holding:
-            # 플레이어별 독립적인 overlay 상태 사용
+            # 플레이어별 독립적인 overlay 상태 사용 (self.overlay.active는 사용하지 않음)
             pid = self.player.player_id
             self._player_overlays[pid] = True
-            self.overlay.active = True
             self.overlay.highlighted = None
         else:
             self._pop(self.player.x, self.player.y - 20, "Drop item first!", C["red"])
 
     def _act_chop(self, st, chop_action=False):
         h = self.player.holding
+        pid = self.player.player_id
+        
+        # 아이템을 들고 있는 경우: chop station에 놓기
         if h:
+            # 멀티플레이어: 다른 플레이어가 사용 중이면 거부
+            if not self._can_use_station(st, pid):
+                locked_by = self._station_locks.get(self._get_station_idx(st))
+                if locked_by is not None and locked_by in self.players:
+                    other_name = self.players[locked_by].name
+                    self._pop(self.player.x, self.player.y - 20, f"{other_name} is using this!", C["red"])
+                else:
+                    self._pop(self.player.x, self.player.y - 20, "Someone is using this!", C["red"])
+                return
+            
             base = h.get("id", "").replace("_c", "")
             if h.get("chopped"):
                 self._pop(self.player.x, self.player.y - 20, "Already chopped", C["white"])
@@ -560,6 +588,9 @@ class Game:
             st.chop_item = dict(h)
             self.player.holding = None
             st.chop_prog = 0.0
+            # Lock station for this player
+            self._lock_station(st, pid)
+            
             if chop_action:
                 st.chop_hits = 1
                 st.chopping = True
@@ -575,17 +606,30 @@ class Game:
             self._motion_gate_ready["chop"] = False
             return
 
+        # 아이템을 들고 있지 않고, 자른 아이템이 있는 경우: 픽업
         if (not chop_action) and st.chop_item and st.chop_item.get("chopped"):
+            # 멀티플레이어: 락 체크 (자른 아이템은 누구나 픽업 가능하도록 락 체크 안 함)
             self.player.holding = dict(st.chop_item)
             st.chop_item = None
             st.chop_prog = 0.0
             st.chop_hits = 0
             st.chopping = False
+            # Unlock station
+            self._unlock_station(st)
             self._pop(self.player.x, self.player.y - 20, "Picked up", C["lime"])
             self.audio.play("pickup_done")
             return
 
+        # chop_action: 자르기
         if chop_action and st.chop_item and not st.chop_item.get("chopped"):
+            # 멀티플레이어: 다른 플레이어가 사용 중이면 거부
+            if not self._can_use_station(st, pid):
+                locked_by = self._station_locks.get(self._get_station_idx(st))
+                if locked_by is not None and locked_by in self.players:
+                    other_name = self.players[locked_by].name
+                    self._pop(self.player.x, self.player.y - 20, f"{other_name} is chopping!", C["red"])
+                return
+            
             st.chopping = True
             st.chop_hits = min(CHOP_ACTIONS, st.chop_hits + 1)
             st.chop_prog = st.chop_hits / float(CHOP_ACTIONS)
@@ -596,7 +640,20 @@ class Game:
         h = self.player.holding
         burned = st.pot_burned
 
+    def _act_pot(self, st, stir_only=False):
+        h = self.player.holding
+        burned = st.pot_burned
+        pid = self.player.player_id
+
         if stir_only:
+            # 멀티플레이어: 다른 플레이어가 사용 중이면 거부
+            if not self._can_use_station(st, pid):
+                locked_by = self._station_locks.get(self._get_station_idx(st))
+                if locked_by is not None and locked_by in self.players:
+                    other_name = self.players[locked_by].name
+                    self._pop(self.player.x, self.player.y - 20, f"{other_name} is cooking!", C["red"])
+                return
+            
             if h:
                 self._pop(self.player.x, self.player.y - 20, "Drop item first!", C["red"])
                 return
@@ -607,6 +664,8 @@ class Game:
                 self._pop(st.cx(), st.y - 14, "Already burned! Clear it.", C["burn"])
                 return
             if not st.pot_cooking and not st.pot_cooked:
+                # Lock station when starting to cook
+                self._lock_station(st, pid)
                 st.pot_on = True
                 st.pot_cooking = True
                 st.pot_stirs = 0
@@ -633,15 +692,27 @@ class Game:
         if h and h.get("cooked"):
             self._pop(self.player.x, self.player.y - 20, "Can't add cooked dish!", C["red"])
         elif h and not st.pot_cooked:
+            # 멀티플레이어: 재료 추가 시 락 체크 (pot에 이미 재료가 있으면 사용 중)
+            if st.pot_items and not self._can_use_station(st, pid):
+                locked_by = self._station_locks.get(self._get_station_idx(st))
+                if locked_by is not None and locked_by in self.players:
+                    other_name = self.players[locked_by].name
+                    self._pop(self.player.x, self.player.y - 20, f"{other_name} is using this!", C["red"])
+                return
+            
             base = h.get("id", "").replace("_c", "")
             if INGS.get(base, {}).get("can_chop") and not h.get("chopped"):
                 self._pop(self.player.x, self.player.y - 20, "Chop it first!", C["red"])
             else:
+                # Lock station when first ingredient is added
+                if not st.pot_items:
+                    self._lock_station(st, pid)
                 st.pot_items.append(dict(h))
                 self.player.holding = None
                 self._pop(st.cx(), st.y - 14, "Added ✓", C["gold"])
                 self.audio.play("splash")
         elif not h and st.pot_cooked and not burned:
+            # 완성품 픽업: unlock station
             dish_name = self._dish_name_from_contents(st.pot_items)
             self.player.holding = {
                 "id": "cooked",
@@ -658,9 +729,11 @@ class Game:
             st.pot_on = False
             st.pot_burn = 0.0
             st.pot_burned = False
+            self._unlock_station(st)
             self._pop(self.player.x, self.player.y - 20, "Picked!", C["green"])
             self.audio.play("plate_ding")
         elif not h and burned:
+            # 탄 음식 픽업: unlock station
             dish_name = self._dish_name_from_contents(st.pot_items)
             self.player.holding = {
                 "id": "cooked",
@@ -678,6 +751,7 @@ class Game:
             st.pot_on = False
             st.pot_burn = 0.0
             st.pot_burned = False
+            self._unlock_station(st)
             self._pop(self.player.x, self.player.y - 20, "Picked burned dish!", C["burn"])
             self.audio.play("burn_puff")
         elif not h and st.pot_cooking:
@@ -746,8 +820,10 @@ class Game:
             self._pop(st.cx(), st.y - 14, "Nothing to trash", C["white"])
 
     def do_action(self):
-        if self.overlay.active:
-            self.overlay.active = False
+        # 현재 플레이어의 overlay 상태 확인
+        pid = self.player.player_id
+        if self._player_overlays.get(pid, False):
+            self._player_overlays[pid] = False
             return
         st = self._near()
         if not st: return
@@ -765,10 +841,9 @@ class Game:
         ing = INGS[ing_key]
         self.player.holding = {"id": ing_key, "label": ing["label"], "chopped": False}
         self._pop(self.player.x, self.player.y - 20, f"Picked {ing['label']}", C["lime"])
-        # 플레이어별 독립적인 overlay 상태 사용
+        # 플레이어별 독립적인 overlay 상태 사용 (self.overlay.active는 사용하지 않음)
         pid = self.player.player_id
         self._player_overlays[pid] = False
-        self.overlay.active = False
         self.audio.play("pickup")
 
     def _pop(self, x, y, msg, col):
@@ -834,6 +909,10 @@ class Game:
             self._build_level(); self._make_btns()
             self.overlay.rebuild()
 
+        # 로컬 플레이어의 overlay 상태를 self.overlay.active에 동기화 (기존 코드와 호환)
+        local_overlay_active = self._player_overlays.get(self.local_player_id, False)
+        self.overlay.active = local_overlay_active
+
         if self.state in ("title", "over"):
             if self.btn_start.update(mpos, mpressed):
                 self.reset(); self.state = "play"
@@ -866,7 +945,6 @@ class Game:
                     self._pick_ingredient(key)
                 else: 
                     self._player_overlays[self.local_player_id] = False
-                    self.overlay.active = False
             # Gesture: finger_N highlights, thumbs_up confirms
             if gi.overlay_select is not None:
                 self.overlay.highlight_by_index(gi.overlay_select - 1)  # 1-based → 0-based
@@ -876,7 +954,6 @@ class Game:
                     self._pick_ingredient(key)
                 else:
                     self._player_overlays[self.local_player_id] = False
-                    self.overlay.active = False
             return
 
         if self.recipe_overlay.active: return
@@ -1632,7 +1709,6 @@ def _main_solo(ui_mode: str, args):
                         game.audio.play("page_flip")
                     elif game._player_overlays.get(game.local_player_id, False):
                         game._player_overlays[game.local_player_id] = False
-                        game.overlay.active = False
                     elif game.state == "play":
                         game.state = "paused"
                         game.audio.play("ui_pause")
