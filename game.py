@@ -357,17 +357,40 @@ class Game:
             self.stations.append(Station(k, sx, sy))
 
     def _get_station_idx(self, station) -> int:
-        \"\"\"Get station index from station object.\"\"\"\n        try:
+        """Get station index from station object."""
+        try:
             return self.stations.index(station)
         except ValueError:
             return -1
 
     def _can_use_station(self, station, player_id: int) -> bool:
-        \"\"\"Check if player can use this station (멀티플레이어 조리대 락 체크).\"\"\"\n        if not self.multiplayer:\n            return True  # Solo mode: always available\n        \n        st_idx = self._get_station_idx(station)\n        if st_idx == -1:\n            return True\n        \n        # Station not locked or locked by this player\n        locked_by = self._station_locks.get(st_idx)\n        return locked_by is None or locked_by == player_id
+        """Check if player can use this station (멀티플레이어 조리대 락 체크)."""
+        if not self.multiplayer:
+            return True  # Solo mode: always available
+        
+        st_idx = self._get_station_idx(station)
+        if st_idx == -1:
+            return True
+        
+        # Station not locked or locked by this player
+        locked_by = self._station_locks.get(st_idx)
+        return locked_by is None or locked_by == player_id
 
-    def _lock_station(self, station, player_id: int):\n        \"\"\"Lock station for exclusive use by player.\"\"\"\n        if not self.multiplayer:\n            return\n        st_idx = self._get_station_idx(station)\n        if st_idx >= 0:\n            self._station_locks[st_idx] = player_id
+    def _lock_station(self, station, player_id: int):
+        """Lock station for exclusive use by player."""
+        if not self.multiplayer:
+            return
+        st_idx = self._get_station_idx(station)
+        if st_idx >= 0:
+            self._station_locks[st_idx] = player_id
 
-    def _unlock_station(self, station):\n        \"\"\"Unlock station.\"\"\"\n        if not self.multiplayer:\n            return\n        st_idx = self._get_station_idx(station)\n        if st_idx >= 0 and st_idx in self._station_locks:\n            del self._station_locks[st_idx]
+    def _unlock_station(self, station):
+        """Unlock station."""
+        if not self.multiplayer:
+            return
+        st_idx = self._get_station_idx(station)
+        if st_idx >= 0 and st_idx in self._station_locks:
+            del self._station_locks[st_idx]
 
     def _recipe_panel_rect(self):
         gw, gh = screen.get_size()
