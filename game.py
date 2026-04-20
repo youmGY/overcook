@@ -185,6 +185,7 @@ class Game:
         self._mp_player_names: dict = {}  # pid → name (from lobby)
         self._lock_modes: dict = {}  # pid → (mode, station) for multiplayer
         self._player_overlays: dict = {}  # pid → overlay active state (독립적 팬트리)
+        self._overlay_highlights: dict = {}  # pid → highlighted index (per-player)
 
         if self.use_gesture:
             self._init_pipeline(
@@ -332,11 +333,13 @@ class Game:
             self.player = self.players[self.local_player_id]
             self._lock_modes = {pid: None for pid in self.players}
             self._player_overlays = {pid: False for pid in self.players}  # 각 플레이어별 overlay 상태
+            self._overlay_highlights = {pid: None for pid in self.players}
         else:
             # Solo: single player
             self.players = {0: Player(gw // 2 - 15, gy - 50, player_id=0, name="Player 1")}
             self.player = self.players[0]
             self._player_overlays = {0: False}
+            self._overlay_highlights = {0: None}
         
         self.overlay.active = False
         self.overlay.rebuild()
@@ -554,6 +557,7 @@ class Game:
             # 플레이어별 독립적인 overlay 상태 사용
             pid = self.player.player_id
             self._player_overlays[pid] = True
+            self._overlay_highlights[pid] = None
             self.overlay.active = True
             self.overlay.highlighted = None
         else:
@@ -784,6 +788,7 @@ class Game:
         # 플레이어별 독립적인 overlay 상태 사용
         pid = self.player.player_id
         self._player_overlays[pid] = False
+        self._overlay_highlights[pid] = None
         self.overlay.active = False
         self.audio.play("pickup")
 
@@ -892,12 +897,15 @@ class Game:
         # 로컬 플레이어의 overlay 상태 확인 (멀티플레이어에서 독립적)
         local_overlay_active = self._player_overlays.get(self.local_player_id, False)
         if local_overlay_active:
+            # 로컬 플레이어의 highlight 복원
+            self.overlay.highlighted = self._overlay_highlights.get(self.local_player_id)
             if gi.overlay_click:
                 key = self.overlay.check_click(gi.overlay_click)
                 if key: 
                     self._pick_ingredient(key)
                 else: 
                     self._player_overlays[self.local_player_id] = False
+                    self._overlay_highlights[self.local_player_id] = None
                     self.overlay.active = False
             # Gesture: finger_N highlights, thumbs_up confirms
             if gi.overlay_select is not None:
@@ -908,7 +916,10 @@ class Game:
                     self._pick_ingredient(key)
                 else:
                     self._player_overlays[self.local_player_id] = False
+                    self._overlay_highlights[self.local_player_id] = None
                     self.overlay.active = False
+            # 로컬 플레이어의 highlight 저장
+            self._overlay_highlights[self.local_player_id] = self.overlay.highlighted
             return
 
         if self.recipe_overlay.active: return
@@ -1134,6 +1145,7 @@ class Game:
 
         # 로컬 플레이어의 overlay만 표시 (멀티플레이어에서 독립적)
         if local_overlay_active:
+            self.overlay.highlighted = self._overlay_highlights.get(self.local_player_id)
             self.overlay.draw(screen)
         self.recipe_overlay.draw(screen)
 
@@ -1354,11 +1366,16 @@ class Game:
             self._lock_mode = None
             self._lock_station = None
         
+        # Restore overlay highlight for this player
+        self.overlay.highlighted = self._overlay_highlights.get(pid)
+        
         # Process input using existing logic
         self._process_single_input(gi, dt)
         
         # Save lock state for this player
         self._lock_modes[pid] = (self._lock_mode, self._lock_station)
+        # Save overlay highlight for this player
+        self._overlay_highlights[pid] = self.overlay.highlighted
         
         self.player = saved_player
 
@@ -1377,6 +1394,7 @@ class Game:
                     self._pick_ingredient(key)
                 else:
                     self._player_overlays[pid] = False
+                    self._overlay_highlights[pid] = None
                     # 서버에서는 overlay.active를 직접 사용하지 않음
             if gi.overlay_select is not None:
                 self.overlay.highlight_by_index(gi.overlay_select - 1)
@@ -1386,6 +1404,7 @@ class Game:
                     self._pick_ingredient(key)
                 else:
                     self._player_overlays[pid] = False
+                    self._overlay_highlights[pid] = None
             return
 
         if self._lock_mode:
@@ -1676,6 +1695,7 @@ def _main_solo(ui_mode: str, args):
                         game.audio.play("page_flip")
                     elif game._player_overlays.get(game.local_player_id, False):
                         game._player_overlays[game.local_player_id] = False
+                        game._overlay_highlights[game.local_player_id] = None
                         game.overlay.active = False
                     elif game.state == "play":
                         game.state = "paused"
