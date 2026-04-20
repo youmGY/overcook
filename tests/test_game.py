@@ -15,6 +15,7 @@ _pygame.init = lambda: None
 _pygame.quit = lambda: None
 _pygame.SRCALPHA = 0
 _pygame.RESIZABLE = 0
+_pygame.FULLSCREEN = 0
 _pygame.QUIT = 256
 _pygame.KEYDOWN = 768
 _pygame.KEYUP = 769
@@ -66,9 +67,13 @@ _draw.arc = lambda *a, **kw: None
 _pygame.draw = _draw
 
 class _FakeDisplay:
+    class _FakeInfo:
+        current_w = 1024
+        current_h = 600
     def set_mode(self, *a, **kw): return _FakeSurface()
     def set_caption(self, *a): pass
     def flip(self): pass
+    def Info(self): return self._FakeInfo()
 
 _pygame.display = _FakeDisplay()
 
@@ -86,28 +91,40 @@ _pygame.mouse.get_pos.return_value = (0, 0)
 _pygame.event = MagicMock()
 _pygame.event.get.return_value = []
 
+_mixer = types.ModuleType("pygame.mixer")
+_mixer.init = lambda *a, **kw: None
+_mixer.set_num_channels = lambda *a: None
+_mixer.Sound = MagicMock(return_value=MagicMock(set_volume=lambda v: None, play=lambda **kw: None))
+_mixer.music = MagicMock()
+_mixer.music.load = lambda *a: None
+_mixer.music.play = lambda *a, **kw: None
+_mixer.music.stop = lambda: None
+_mixer.music.set_volume = lambda v: None
+_mixer.music.get_busy = lambda: False
+_pygame.mixer = _mixer
+
 sys.modules["pygame"] = _pygame
 
 # ─── now import game modules ────────────────────────────────────────────────
-import constants
-from constants import (
+import overcook.constants as constants
+from overcook.constants import (
     C, INGS, ING_KEYS, RECIPES,
     BURN_TIME, COOK_TIME, CHOP_TIME, ORDER_TIME, GAME_TIME,
     CHOP_ACTIONS, STIR_ACTIONS,
 )
 
-import engine
+import overcook.engine as engine
 engine.screen = _FakeSurface()
 engine.F = {sz: _FakeFont() for sz in (12, 14, 18, 24, 32, 40)}
 
-import utils
-from utils import bar
+import overcook.utils as utils
+from overcook.utils import bar
 
-import entities
-from entities import Station, Player, Order
+import overcook.entities as entities
+from overcook.entities import Station, Player, Order
 
-import game as game_module
-from game import Game, GameInput
+import overcook.game as game_module
+from overcook.game import Game, GameInput
 
 
 # ════════════════════════════════════════════════════════════════════════════

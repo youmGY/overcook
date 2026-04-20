@@ -4,9 +4,10 @@ from __future__ import annotations
 import os
 import pygame
 
-_ASSET_DIR = os.path.join(os.path.dirname(__file__), "assets")
-_SFX_DIR = os.path.join(_ASSET_DIR, "sfx")
-_BGM_DIR = os.path.join(_ASSET_DIR, "bgm")
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ASSET_DIR = os.path.join(_ROOT, "assets")
+_SFX_DIR = os.path.join(_ASSET_DIR, "audio", "sfx")
+_BGM_DIR = os.path.join(_ASSET_DIR, "audio", "bgm")
 
 # Volume defaults
 _SFX_VOL = 0.8

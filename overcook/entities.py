@@ -3,8 +3,10 @@ import math
 import time
 import os
 
-from engine import F, get_img
-from constants import (
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+from .engine import F, get_img
+from .constants import (
     C,
     INGS,
     RECIPES,
@@ -14,19 +16,19 @@ from constants import (
     STIR_ACTIONS,
     PLAYER_COLORS,
 )
-from utils import rr, bar
+from .utils import rr, bar
 
 
-COMPLETED_FOOD_DIR = "assets/ccompleted_foods"
+COMPLETED_FOOD_DIR = os.path.join(_ROOT, "assets", "images", "completed_foods")
 _COMPLETED_IMG_CACHE = {}
 
 # Station icon images mapping
 STATION_ICONS = {
-    "ing": "assets/stations/pantry.png",
-    "chop": "assets/stations/chop.png",
-    "pot": "assets/stations/stove.png",
-    "submit": "assets/stations/submit.png",
-    "trash": "assets/stations/trash.png",
+    "ing":    os.path.join(_ROOT, "assets", "images", "stations", "pantry.png"),
+    "chop":   os.path.join(_ROOT, "assets", "images", "stations", "chop.png"),
+    "pot":    os.path.join(_ROOT, "assets", "images", "stations", "stove.png"),
+    "submit": os.path.join(_ROOT, "assets", "images", "stations", "submit.png"),
+    "trash":  os.path.join(_ROOT, "assets", "images", "stations", "trash.png"),
 }
 _STATION_ICON_CACHE = {}
 

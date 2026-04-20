@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Callable, Dict, List, Optional
 
-from constants import NET_PORT, NET_DISCOVERY_PORT, NET_MAX_PLAYERS
+from .constants import NET_PORT, NET_DISCOVERY_PORT, NET_MAX_PLAYERS
 
 
 # ── helpers ───────────────────────────────────────────────────────────

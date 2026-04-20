@@ -9,10 +9,10 @@ States:
 """
 
 import pygame
-from engine import screen
-from constants import C, NET_PORT, PLAYER_COLORS
-from utils import rr, txt
-from ui import Btn
+from ..engine import screen
+from ..constants import C, NET_PORT, PLAYER_COLORS
+from ..utils import rr, txt
+from .game_ui import Btn
 
 
 class LobbyUI:

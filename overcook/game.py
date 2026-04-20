@@ -22,16 +22,18 @@ try:
 except Exception:
     cv2 = None
 
-from engine import screen, clock, FPS, F, get_img
-from constants import C, INGS, ING_KEYS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
-from utils import rr, txt, bar
-from ui import Popup, Btn, RecipeOverlay, IngredientOverlay
-from entities import Station, Player, Order, _load_completed_food_img
-from audio import AudioManager
+from .engine import screen, clock, FPS, F, get_img
+from .constants import C, INGS, ING_KEYS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
+from .utils import rr, txt, bar
+from .ui import Popup, Btn, RecipeOverlay, IngredientOverlay
+from .entities import Station, Player, Order, _load_completed_food_img
+from .audio import AudioManager
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ── logger ────────────────────────────────────────────────────────────────
 logging.basicConfig(
-    filename="game.log",
+    filename=os.path.join(_ROOT, "game.log"),
     filemode="a",
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -208,10 +210,11 @@ class Game:
     def _load_title_bg(self):
         """Load and cache the title screen background image."""
         try:
-            if not os.path.exists("assets/Game_Screen.png"):
+            _bg_path = os.path.join(_ROOT, "assets", "images", "ui", "Game_Screen.png")
+            if not os.path.exists(_bg_path):
                 return
-            self._title_bg_img = pygame.image.load("assets/Game_Screen.png")
-            log.info("Title background image loaded: assets/Game_Screen.png")
+            self._title_bg_img = pygame.image.load(_bg_path)
+            log.info("Title background image loaded: %s", _bg_path)
         except Exception as e:
             log.error("Failed to load title background: %s", e)
             self._title_bg_img = None
@@ -219,10 +222,10 @@ class Game:
     def _load_start_btn(self):
         """Load and cache the start button image."""
         try:
-            if not os.path.exists("assets/start_btn.png"):
+            _btn_path = os.path.join(_ROOT, "assets", "images", "ui", "start_btn.png")
+            if not os.path.exists(_btn_path):
                 return
-            self._start_btn_img = pygame.image.load("assets/start_btn.png")
-            # self._start_btn_img = None
+            self._start_btn_img = pygame.image.load(_btn_path)
         except Exception as e:
             log.error("Failed to load start button: %s", e)
             self._start_btn_img = None
@@ -256,9 +259,9 @@ class Game:
     ):
         """Initialise the gesture recognition pipeline (lazy import)."""
         try:
-            from src.recognition.camera import CameraConfig
-            from src.recognition.hand_tracker import HandTrackerConfig
-            from src.recognition.interface import RecognitionPipeline
+            from .recognition.camera import CameraConfig
+            from .recognition.hand_tracker import HandTrackerConfig
+            from .recognition.interface import RecognitionPipeline
 
             fps = 60 if fast_motion else 30
             max_hands = 1 if fast_motion else 2
