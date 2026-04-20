@@ -22,6 +22,20 @@ from .motion import MotionDebug, MotionDetector, compute_hand_flags
 _MISSING_GESTURE_HOLD_FRAMES = 10
 
 
+def _hand_scale_from_landmarks(landmarks) -> Optional[float]:
+    """Estimate per-hand scale from landmark geometry in normalized coords."""
+    if landmarks is None or len(landmarks) < 21:
+        return None
+    # Palm width + palm length are both fairly stable across poses.
+    i_mcp = landmarks[5]
+    p_mcp = landmarks[17]
+    wrist = landmarks[0]
+    m_mcp = landmarks[9]
+    palm_w = ((i_mcp.x - p_mcp.x) ** 2 + (i_mcp.y - p_mcp.y) ** 2) ** 0.5
+    palm_l = ((wrist.x - m_mcp.x) ** 2 + (wrist.y - m_mcp.y) ** 2) ** 0.5
+    return max(1e-4, max(palm_w, palm_l))
+
+
 def _apply_clahe(frame_bgr, clip_limit: float, grid: int):
     """Normalize brightness in LAB space to reduce over/under exposure issues."""
     lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
@@ -169,6 +183,7 @@ class RecognitionPipeline:
             hand_flags[hand_id] = compute_hand_flags(state.landmarks, mp_label, self.flip)
 
         hand_wrists: Dict[str, Optional[Tuple[float, float]]] = {}
+        hand_scales: Dict[str, Optional[float]] = {}
         for hand_id in ("left", "right"):
             state = hands[hand_id]
             if state.landmarks is not None:
@@ -179,10 +194,17 @@ class RecognitionPipeline:
                     sum_x += lm.x
                     sum_y += lm.y
                 hand_wrists[hand_id] = (sum_x / count, sum_y / count)
+                hand_scales[hand_id] = _hand_scale_from_landmarks(state.landmarks)
             else:
                 hand_wrists[hand_id] = None
+                hand_scales[hand_id] = None
 
-        motion_results = self._motion.update(hand_flags, hand_wrists, fps=self._hands.fps)
+        motion_results = self._motion.update(
+            hand_flags,
+            hand_wrists,
+            fps=self._hands.fps,
+            hand_scales=hand_scales,
+        )
         both_label, both_conf, _both_cnt = motion_results.get("both", (None, 0.0, 0))
 
         outputs: List[HandInput] = []

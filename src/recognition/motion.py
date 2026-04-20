@@ -117,6 +117,10 @@ _HOLD_FRAMES = 10
 _BUFFER_MAXLEN = 120
 _DESIGN_FPS = 30
 _FPS_WARMUP_MIN = 8
+_HAND_SCALE_REF = 0.12
+_HAND_SCALE_MIN_FACTOR = 0.6
+_HAND_SCALE_MAX_FACTOR = 1.6
+_HAND_SCALE_EMA_ALPHA = 0.25
 
 
 @dataclass
@@ -210,6 +214,7 @@ class _HandMotionState:
     _rev_stir: int = 0
     _prev_rev_chop: int = 0
     _prev_rev_stir: int = 0
+    hand_scale: float = _HAND_SCALE_REF
 
 class MotionDetector:
     """Detect chop/stir per hand, plus hands_together and palms_down events.
@@ -246,6 +251,7 @@ class MotionDetector:
         now: Optional[float] = None,
         *,
         fps: Optional[float] = None,
+        hand_scales: Optional[Dict[str, Optional[float]]] = None,
     ) -> Dict[str, Tuple[Optional[str], float, int]]:
         """Feed per-hand flag snapshot + hand wrist positions.
 
@@ -266,6 +272,8 @@ class MotionDetector:
 
         if hand_wrists is None:
             hand_wrists = {}
+        if hand_scales is None:
+            hand_scales = {}
 
         results: Dict[str, Tuple[Optional[str], float, int]] = {
             "left": (None, 0.0, 0),
@@ -274,17 +282,33 @@ class MotionDetector:
         }
 
         fps_eff = fps if (fps is not None and fps >= _FPS_WARMUP_MIN) else _DESIGN_FPS
-        scale = fps_eff / _DESIGN_FPS
-        amp_window = max(8, round(_AMP_WINDOW * scale))
-        still_reset = max(6, round(_STILL_RESET_FRAMES * scale))
-        hold = max(3, round(_HOLD_FRAMES * scale))
-        cache_max = max(3, round(_HAND_CACHE_MAX * scale))
-        active_speed_thresh = _MIN_ACTIVE_SPEED / scale
-        still_speed_thresh = _STILL_SPEED_MAX / scale
+        fps_scale = fps_eff / _DESIGN_FPS
+        amp_window = max(8, round(_AMP_WINDOW * fps_scale))
+        still_reset = max(6, round(_STILL_RESET_FRAMES * fps_scale))
+        hold = max(3, round(_HOLD_FRAMES * fps_scale))
+        cache_max = max(3, round(_HAND_CACHE_MAX * fps_scale))
 
         for hand in ("left", "right"):
             st = self._state[hand]
             wrist_pos = hand_wrists.get(hand)
+            hand_scale_now = hand_scales.get(hand)
+            if hand_scale_now is not None:
+                st.hand_scale = (
+                    (1.0 - _HAND_SCALE_EMA_ALPHA) * st.hand_scale
+                    + _HAND_SCALE_EMA_ALPHA * hand_scale_now
+                )
+
+            hand_factor = max(
+                _HAND_SCALE_MIN_FACTOR,
+                min(_HAND_SCALE_MAX_FACTOR, st.hand_scale / _HAND_SCALE_REF),
+            )
+
+            amp_x_thresh = _OSCILLATION_AMP_X * hand_factor
+            amp_y_thresh = _OSCILLATION_AMP_Y * hand_factor
+            amp_large_x_thresh = _OSCILLATION_AMP_LARGE_X * hand_factor
+            amp_large_y_thresh = _OSCILLATION_AMP_LARGE_Y * hand_factor
+            active_speed_thresh = (_MIN_ACTIVE_SPEED / fps_scale) * hand_factor
+            still_speed_thresh = (_STILL_SPEED_MAX / fps_scale) * hand_factor
 
             if wrist_pos is not None:
                 wx, wy = wrist_pos
@@ -307,7 +331,7 @@ class MotionDetector:
             else:
                 if st.last_wrist_pos and st.wrist_absent < cache_max:
                     vx, vy = st.last_wrist_vel
-                    damp = 0.7 ** ((st.wrist_absent + 1) / scale)
+                    damp = 0.7 ** ((st.wrist_absent + 1) / fps_scale)
                     pred_x = max(0.0, min(1.0, st.last_wrist_pos[0] + vx * damp))
                     pred_y = max(0.0, min(1.0, st.last_wrist_pos[1] + vy * damp))
                     st.wy.append(pred_y)
@@ -335,7 +359,7 @@ class MotionDetector:
                 st.still_counter = 0
 
             _EMA_ALPHA_BASE = 0.35
-            ema_alpha = 1.0 - (1.0 - _EMA_ALPHA_BASE) ** (1.0 / scale)
+            ema_alpha = 1.0 - (1.0 - _EMA_ALPHA_BASE) ** (1.0 / fps_scale)
             if wrist_pos is not None:
                 wx_raw, wy_raw = wrist_pos
                 if st._ema_y is None:
@@ -350,7 +374,7 @@ class MotionDetector:
                 if st._dir_y != 0:
                     new_dir_y = 1 if st._ema_y > st._extreme_y else (-1 if st._ema_y < st._extreme_y else st._dir_y)
                     if new_dir_y != st._dir_y:
-                        if abs(st._ema_y - st._extreme_y) >= _OSCILLATION_AMP_Y:
+                        if abs(st._ema_y - st._extreme_y) >= amp_y_thresh:
                             st._rev_chop += 1
                         st._extreme_y = st._ema_y
                         st._dir_y = new_dir_y
@@ -363,7 +387,7 @@ class MotionDetector:
                 if st._dir_x != 0:
                     new_dir_x = 1 if st._ema_x > st._extreme_x else (-1 if st._ema_x < st._extreme_x else st._dir_x)
                     if new_dir_x != st._dir_x:
-                        if abs(st._ema_x - st._extreme_x) >= _OSCILLATION_AMP_X:
+                        if abs(st._ema_x - st._extreme_x) >= amp_x_thresh:
                             st._rev_stir += 1
                         st._extreme_x = st._ema_x
                         st._dir_x = new_dir_x
@@ -380,14 +404,14 @@ class MotionDetector:
 
             is_chop = (
                 (chop_osc >= _OSCILLATION_MIN_CHOP)
-                or (r_y_amp >= _OSCILLATION_AMP_LARGE_Y and chop_osc >= 2)
-            ) and r_y_amp >= _OSCILLATION_AMP_Y
+                or (r_y_amp >= amp_large_y_thresh and chop_osc >= 2)
+            ) and r_y_amp >= amp_y_thresh
 
             moving = st.avg_speed >= active_speed_thresh
             is_stir = moving and (
                 (stir_osc >= _OSCILLATION_MIN_STIR)
-                or (r_x_amp >= _OSCILLATION_AMP_LARGE_X and stir_osc >= 2)
-            ) and r_x_amp >= _OSCILLATION_AMP_X
+                or (r_x_amp >= amp_large_x_thresh and stir_osc >= 2)
+            ) and r_x_amp >= amp_x_thresh
 
             raw = None
             if is_chop and is_stir:
@@ -412,8 +436,9 @@ class MotionDetector:
             else:
                 output = None
 
-            chop_new = st._rev_chop - st._prev_rev_chop
-            stir_new = st._rev_stir - st._prev_rev_stir
+            # Count one full round trip as 1 action (two reversals = 1 cycle).
+            chop_new = (st._rev_chop // 2) - (st._prev_rev_chop // 2)
+            stir_new = (st._rev_stir // 2) - (st._prev_rev_stir // 2)
             st._prev_rev_chop = st._rev_chop
             st._prev_rev_stir = st._rev_stir
 
@@ -433,7 +458,7 @@ class MotionDetector:
             dbg.hold_counter = st.hold_counter
 
             if output is not None:
-                amp_ref = _OSCILLATION_AMP_Y if output == MOTION_CHOP else _OSCILLATION_AMP_X
+                amp_ref = amp_y_thresh if output == MOTION_CHOP else amp_x_thresh
                 conf = min(1.0, max(r_y_amp, r_x_amp) / amp_ref)
                 count = active_chop_delta + active_stir_delta
                 results[hand] = (output, conf, count)

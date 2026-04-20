@@ -843,6 +843,8 @@ class Game:
             self.player.update(move_dir, dt, gw, self._gy())
 
             st = self._lock_station
+            px, py = self.player.center()
+            in_lock_range = bool(st and st.dist(px, py) < 110)
 
             # Allow thumbs_up/confirm interactions even while lock mode is active.
             if act_flags["confirm"] and st:
@@ -857,13 +859,25 @@ class Game:
             elif self._lock_mode == "stir" and not gi.stir:
                 self._motion_gate_ready["stir"] = True
 
-            if self._lock_mode == "chop" and act_flags["chop"] and st and not act_flags["confirm"]:
+            if (
+                self._lock_mode == "chop"
+                and act_flags["chop"]
+                and st
+                and in_lock_range
+                and not act_flags["confirm"]
+            ):
                 # Ignore stale gesture pulse that existed before lock started.
                 if gi.chop and not self._motion_gate_ready["chop"]:
                     pass
                 else:
                     self._act_chop(st, chop_action=True)
-            elif self._lock_mode == "stir" and act_flags["stir"] and st and not act_flags["confirm"]:
+            elif (
+                self._lock_mode == "stir"
+                and act_flags["stir"]
+                and st
+                and in_lock_range
+                and not act_flags["confirm"]
+            ):
                 if gi.stir and not self._motion_gate_ready["stir"]:
                     pass
                 else:
