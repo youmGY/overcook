@@ -96,7 +96,8 @@ _COOLDOWN_S = 0.3
 #  Sliding-window oscillation parameters
 # ---------------------------------------------------------------------------
 
-_OSCILLATION_MIN = 1
+_OSCILLATION_MIN_CHOP = 2
+_OSCILLATION_MIN_STIR = 2
 
 _OSCILLATION_AMP_X = 0.03
 _OSCILLATION_AMP_Y = 0.025
@@ -378,14 +379,14 @@ class MotionDetector:
             stir_osc = st._rev_stir
 
             is_chop = (
-                (chop_osc >= _OSCILLATION_MIN)
-                or (r_y_amp >= _OSCILLATION_AMP_LARGE_Y and chop_osc >= 1)
+                (chop_osc >= _OSCILLATION_MIN_CHOP)
+                or (r_y_amp >= _OSCILLATION_AMP_LARGE_Y and chop_osc >= 2)
             ) and r_y_amp >= _OSCILLATION_AMP_Y
 
             moving = st.avg_speed >= active_speed_thresh
             is_stir = moving and (
-                (stir_osc >= _OSCILLATION_MIN)
-                or (r_x_amp >= _OSCILLATION_AMP_LARGE_X and stir_osc >= 1)
+                (stir_osc >= _OSCILLATION_MIN_STIR)
+                or (r_x_amp >= _OSCILLATION_AMP_LARGE_X and stir_osc >= 2)
             ) and r_x_amp >= _OSCILLATION_AMP_X
 
             raw = None
