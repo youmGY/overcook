@@ -49,47 +49,54 @@ _LABEL_TO_COUNT = {
 
 _DEFAULT_ONNX = os.path.join(os.path.dirname(__file__), "gesture_mlp.onnx")
 
-# ---- feature extraction (matches training pipeline) ----
-
-_BENDING_JOINTS = [
-    (0, 1, 2), (1, 2, 3), (2, 3, 4),
-    (0, 5, 6), (5, 6, 7), (6, 7, 8),
-    (0, 9, 10), (9, 10, 11), (10, 11, 12),
-    (0, 13, 14), (13, 14, 15), (14, 15, 16),
-    (0, 17, 18), (17, 18, 19), (18, 19, 20),
-]
-
-_SPREAD_PAIRS = [(1, 5), (1, 9), (1, 13), (1, 17)]
+# ---- feature extraction (56-dim normalized coordinates) ----
 
 
-def _cosine_angle(a, b, c):
-    ba = a - b
-    bc = c - b
-    dot = np.dot(ba, bc)
-    norm = np.linalg.norm(ba) * np.linalg.norm(bc)
-    if norm < 1e-8:
-        return 0.0
-    return float(np.clip(dot / norm, -1.0, 1.0))
+def _normalize_landmarks(lm: np.ndarray, is_left: bool) -> np.ndarray | None:
+    """(21, 3) landmarks → normalized (21, 3). Returns None on failure."""
+    lm = lm - lm[0]
+    v1 = lm[17].copy()
+    v2 = lm[5].copy()
+    norm_v1 = np.linalg.norm(v1)
+    if norm_v1 < 1e-8:
+        return None
+    ex = v1 / norm_v1
+    v2_perp = v2 - np.dot(v2, ex) * ex
+    norm_v2_perp = np.linalg.norm(v2_perp)
+    if norm_v2_perp < 1e-8:
+        return None
+    ey = v2_perp / norm_v2_perp
+    ez = np.cross(ex, ey)
+    R = np.stack([ex, ey, ez], axis=0)
+    lm = (R @ lm.T).T
+    lm = lm / norm_v1
+    if is_left:
+        lm[:, 2] = -lm[:, 2]
+    return lm.astype(np.float32)
 
 
-def _cosine_spread(landmarks, a_idx, b_idx):
-    va = landmarks[a_idx] - landmarks[0]
-    vb = landmarks[b_idx] - landmarks[0]
-    dot = np.dot(va, vb)
-    norm = np.linalg.norm(va) * np.linalg.norm(vb)
-    if norm < 1e-8:
-        return 0.0
-    return float(np.clip(dot / norm, -1.0, 1.0))
-
-
-def extract_features(landmarks_np: np.ndarray) -> np.ndarray:
-    """Extract 19-dim feature vector (15 bending + 4 spread angles)."""
+def _landmarks_to_features(lm_norm: np.ndarray) -> np.ndarray:
+    """Normalized (21,3) → 56-dim feature vector."""
     feats = []
-    for a, b, c in _BENDING_JOINTS:
-        feats.append(_cosine_angle(landmarks_np[a], landmarks_np[b], landmarks_np[c]))
-    for a_idx, b_idx in _SPREAD_PAIRS:
-        feats.append(_cosine_spread(landmarks_np, a_idx, b_idx))
+    for i in range(21):
+        if i == 0:
+            continue
+        if i == 17:
+            continue
+        if i == 5:
+            feats.append(lm_norm[i, 0])
+            feats.append(lm_norm[i, 1])
+        else:
+            feats.extend(lm_norm[i].tolist())
     return np.array(feats, dtype=np.float32)
+
+
+def extract_features(landmarks_np: np.ndarray, is_left: bool = False) -> np.ndarray | None:
+    """Extract 56-dim normalized coordinate features. Returns None on failure."""
+    lm_norm = _normalize_landmarks(landmarks_np, is_left)
+    if lm_norm is None:
+        return None
+    return _landmarks_to_features(lm_norm)
 
 
 def landmarks_to_numpy(landmarks) -> np.ndarray:
@@ -112,13 +119,16 @@ class GestureClassifierDNN:
         self._input_name = self._session.get_inputs()[0].name
         self._threshold = confidence_threshold
 
-    def predict(self, landmarks_np: np.ndarray) -> Tuple[str, float, int]:
+    def predict(self, landmarks_np: np.ndarray, is_left: bool = False) -> Tuple[str, float, int]:
         """Classify a (21,3) landmark array.
 
         Returns (label, confidence, finger_count).
-        If confidence < threshold, returns (unknown, conf, 0).
+        If confidence < threshold or normalization fails, returns (unknown, conf, 0).
         """
-        features = extract_features(landmarks_np).reshape(1, -1)
+        features = extract_features(landmarks_np, is_left)
+        if features is None:
+            return LABEL_UNKNOWN, 0.0, 0
+        features = features.reshape(1, -1)
         logits = self._session.run(None, {self._input_name: features})[0][0]
         exp = np.exp(logits - logits.max())
         probs = exp / exp.sum()
