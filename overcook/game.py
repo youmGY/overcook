@@ -978,6 +978,7 @@ class Game:
             if gi.overlay_cancel:
                 self._player_overlays[self.local_player_id] = False
                 self.overlay.highlighted = None
+                self._player_highlights[self.local_player_id] = None
                 return
             if gi.overlay_click:
                 key = self.overlay.check_click(gi.overlay_click)
@@ -986,8 +987,10 @@ class Game:
                 else:
                     self._player_overlays[self.local_player_id] = False
                     self.overlay.highlighted = None
+                    self._player_highlights[self.local_player_id] = None
             if gi.overlay_select is not None:
                 self.overlay.highlight_by_index(gi.overlay_select - 1)  # 1-based → 0-based
+                self._player_highlights[self.local_player_id] = self.overlay.highlighted
             if gi.overlay_confirm:
                 key = self.overlay.confirm_highlighted()
                 if key:
@@ -995,6 +998,7 @@ class Game:
                 else:
                     self._player_overlays[self.local_player_id] = False
                     self.overlay.highlighted = None
+                    self._player_highlights[self.local_player_id] = None
             return
 
         if self.recipe_overlay.active: return
@@ -1220,6 +1224,8 @@ class Game:
 
         # 로컬 플레이어의 overlay만 표시 (멀티플레이어에서 독립적)
         if local_overlay_active:
+            # Sync highlighted from per-player store so server-side swapping doesn't blank it
+            self.overlay.highlighted = self._player_highlights.get(self.local_player_id)
             self.overlay.draw(screen)
         self.recipe_overlay.draw(screen)
 
