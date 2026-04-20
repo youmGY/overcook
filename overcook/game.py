@@ -99,12 +99,20 @@ class GameInput:
         )
 
 
-def hand_inputs_to_game_input(hands, overlay_active: bool = False) -> GameInput:
+def hand_inputs_to_game_input(
+    hands,
+    overlay_active: bool = False,
+    thumbs_cooldown: bool = False,
+) -> GameInput:
     """Convert List[HandInput] → GameInput following the gesture-action table.
 
     When the ingredient overlay is active, finger_N highlights an ingredient
     and thumbs_up confirms the selection.  Otherwise finger_N maps to
     move_to_slot and thumbs_up maps to confirm (station-specific action).
+
+    thumbs_up confirm is fired as soon as the gesture is first detected
+    (h.gesture == "thumbs_up"), gated by thumbs_cooldown to prevent
+    re-firing while the user holds the pose.
     """
     gi = GameInput()
     for h in hands:
@@ -117,7 +125,14 @@ def hand_inputs_to_game_input(hands, overlay_active: bool = False) -> GameInput:
         elif h.motion == "stir_motion" and h.motion_count > 0:
             gi.stir = True
 
-        # --- gesture-confirmed actions (debounced, fires once) ---
+        # --- thumbs_up: fire on first detection, not after N-frame debounce ---
+        if h.gesture == "thumbs_up" and not thumbs_cooldown:
+            if overlay_active:
+                gi.overlay_confirm = True
+            else:
+                gi.confirm = True
+
+        # --- debounced finger_N slot selection ---
         if not h.gesture_confirmed:
             continue
 
@@ -127,11 +142,6 @@ def hand_inputs_to_game_input(hands, overlay_active: bool = False) -> GameInput:
             else:
                 gi.move_to_slot = h.target_slot
 
-        if h.motion == "thumbs_up" or h.gesture == "thumbs_up":
-            if overlay_active:
-                gi.overlay_confirm = True
-            else:
-                gi.confirm = True
     return gi
 
 
@@ -190,6 +200,10 @@ class Game:
         self._lock_modes: dict = {}  # pid → (mode, station) for multiplayer
         self._player_overlays: dict = {}  # pid → overlay active state (독립적 팬트리)
         self._station_locks: dict = {}  # station_idx → player_id (조리대 사용권)
+
+        # Thumbs-up cooldown: True while the gesture is held to prevent re-firing
+        # each frame. Resets to False when thumbs_up is no longer detected.
+        self._thumbs_up_held: bool = False
 
         if self.use_gesture:
             self._init_pipeline(
@@ -998,6 +1012,12 @@ class Game:
 
         if self.recipe_overlay.active: return
 
+        # Tick stations first so completion state (chopped/cooked) is up-to-date
+        # before we evaluate lock-mode exit and process this frame's input.
+        station_events = []
+        for s in self.stations:
+            station_events.extend((s, ev) for ev in s.update(dt))
+
         if self._lock_mode:
             # While action mode is locked, still allow movement controls.
             act_flags = {
@@ -1140,18 +1160,17 @@ class Game:
             if act_flags["confirm"] and not handled:
                 self.do_action()
 
-        for s in self.stations:
-            events = s.update(dt)
-            for ev in events:
-                if ev == "chop_done":
-                    self._pop(s.cx(), s.y - 14, "✓ Chopped!", C["lime"])
-                    self.audio.play("chop_done")
-                elif ev == "cook_done":
-                    self._pop(s.cx(), s.y - 14, "✓ Cooked! Pick it up!", C["green"])
-                    self.audio.play("cook_done")
-                elif ev == "burned":
-                    self._pop(s.cx(), s.y - 14, "🔥 BURNED!", C["burn"])
-                    self.audio.play("burn_alarm")
+        # Emit audio/popup for station events collected at the top of this frame
+        for s, ev in station_events:
+            if ev == "chop_done":
+                self._pop(s.cx(), s.y - 14, "✓ Chopped!", C["lime"])
+                self.audio.play("chop_done")
+            elif ev == "cook_done":
+                self._pop(s.cx(), s.y - 14, "✓ Cooked! Pick it up!", C["green"])
+                self.audio.play("cook_done")
+            elif ev == "burned":
+                self._pop(s.cx(), s.y - 14, "🔥 BURNED!", C["burn"])
+                self.audio.play("burn_alarm")
 
         for o in self.orders:
             ev = o.update(dt)
@@ -1842,7 +1861,19 @@ def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) ->
         hand_inputs, pipeline_frame = game.gesture_step()
         if hand_inputs:
             local_overlay = game._player_overlays.get(game.local_player_id, False)
-            gesture_gi = hand_inputs_to_game_input(hand_inputs, overlay_active=local_overlay)
+            # Detect whether ANY hand currently shows thumbs_up (for cooldown logic)
+            any_thumbs_up = any(
+                h.gesture == "thumbs_up" for h in hand_inputs if not h.stale
+            )
+            gesture_gi = hand_inputs_to_game_input(
+                hand_inputs,
+                overlay_active=local_overlay,
+                thumbs_cooldown=game._thumbs_up_held,
+            )
+            # Update held state: reset when thumbs_up is no longer seen
+            game._thumbs_up_held = any_thumbs_up
+        else:
+            game._thumbs_up_held = False
 
     move_dir = 0
     if held["left"]: move_dir = -1
