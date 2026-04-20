@@ -881,20 +881,24 @@ class Game:
                 self.audio.pause_bgm()
                 return
 
-            move_to_slot = gi.move_to_slot
-            clicked_station = self._station_at_point(gi.station_click)
-            if clicked_station:
-                self.player.x = float(clicked_station.cx() - Player.PW // 2)
-                self.player.y = float(self._gy() - Player.PH)
-                self.player.vy = 0.0
-
-            move_dir = gi.move_dir
-            if move_to_slot is not None:
-                target = self._station_for_slot(move_to_slot)
-                if target:
-                    self.player.x = float(target.cx() - Player.PW // 2)
+            # Prevent all movement during chopping/stirring
+            if self._lock_mode in ("chop", "stir"):
+                move_dir = 0
+            else:
+                move_to_slot = gi.move_to_slot
+                clicked_station = self._station_at_point(gi.station_click)
+                if clicked_station:
+                    self.player.x = float(clicked_station.cx() - Player.PW // 2)
                     self.player.y = float(self._gy() - Player.PH)
                     self.player.vy = 0.0
+
+                move_dir = gi.move_dir
+                if move_to_slot is not None:
+                    target = self._station_for_slot(move_to_slot)
+                    if target:
+                        self.player.x = float(target.cx() - Player.PW // 2)
+                        self.player.y = float(self._gy() - Player.PH)
+                        self.player.vy = 0.0
 
             self.player.update(move_dir, dt, gw, self._gy())
 
