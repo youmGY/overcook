@@ -172,8 +172,10 @@ class Game:
         self._act_btn_info = self._build_act_btn_info()
         self._title_bg_img = None
         self._start_btn_img = None
+        self._settings_btn_img = None
         self._load_title_bg()
         self._load_start_btn()
+        self._load_settings_btn()
 
         # Multiplayer fields
         self.multiplayer = multiplayer
@@ -226,6 +228,16 @@ class Game:
         except Exception as e:
             log.error("Failed to load start button: %s", e)
             self._start_btn_img = None
+
+    def _load_settings_btn(self):
+        """Load and cache the settings button image."""
+        try:
+            if not os.path.exists("assets/settings_btn.png"):
+                return
+            self._settings_btn_img = pygame.image.load("assets/settings_btn.png")
+        except Exception as e:
+            log.error("Failed to load settings button: %s", e)
+            self._settings_btn_img = None
 
     def _build_act_btn_info(self):
         return [
@@ -480,8 +492,8 @@ class Game:
             self._cam_slot_rect = None
 
         self.btn_action = self.btn_acts_map["confirm"]
-        self.btn_start    = Btn(gw // 2 - 200, gh // 2 + 81, 400, 110, "Start", (184, 101, 30))
-        self.btn_settings = Btn(gw // 2 - 70,  gh // 2 + 205, 140, 42, "Settings", (55, 55, 110))
+        self.btn_start    = Btn(gw // 2 - 250, gh // 2 + 110, 240, 80, "Start",    (184, 101, 30))
+        self.btn_settings = Btn(gw // 2 + 10,  gh // 2 + 110, 240, 80, "Settings", (55, 55, 110))
         self.btn_pause_continue  = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "Continue", (40, 120, 60))
         self.btn_pause_restart   = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "Restart",  (120, 50, 50))
         self.btn_pause_home      = Btn(gw // 2 - 115, gh // 2 + 82, 110, 42, "Home",     (80, 60, 120))
@@ -1291,7 +1303,13 @@ class Game:
             # Fallback to regular button drawing
             self.btn_start.draw(screen)
 
-        self.btn_settings.draw(screen)
+        # Draw settings button image if available
+        if self._settings_btn_img:
+            btn_rect = self.btn_settings.rect
+            btn_scaled = pygame.transform.smoothscale(self._settings_btn_img, (btn_rect.width, btn_rect.height))
+            screen.blit(btn_scaled, btn_rect.topleft)
+        else:
+            self.btn_settings.draw(screen)
         self.settings_overlay.draw(screen)
 
     def draw_over(self):
