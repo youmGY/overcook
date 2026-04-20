@@ -203,10 +203,14 @@ class Station:
         icon_img = _load_station_icon(self.kind, 60)
         if icon_img:
             img_w, img_h = icon_img.get_size()
-            # Center horizontally, align bottom vertically
             x = ix - img_w // 2
             y = iy - img_h + 10
             surf.blit(icon_img, (int(x), int(y)))
+            # Draw item overlay on top of station image
+            if self.kind == "chop" and self.chop_item:
+                self._draw_chop_item(surf, ix, iy - 8)
+            elif self.kind == "pot":
+                self._draw_pot_items(surf, ix, iy - 15)
             return
 
         # Fallback to original drawing code if image not found
@@ -217,22 +221,7 @@ class Station:
 
         elif self.kind == "chop":
             if self.chop_item:
-                item_id = self.chop_item["id"]
-                img = get_img(item_id, 18, 18)
-                if img:
-                    surf.blit(img, (ix - 9, iy - 9))
-                    if not self.chop_item.get("chopped"):
-                        bar(surf, self.x + 2, self.y - 8, self.w - 4, 5,
-                            self.chop_prog, (50, 50, 50), C["orange"], 2)
-                else:
-                    bid = item_id.replace("_c", "")
-                    col = INGS.get(bid, {}).get("color", (150, 150, 150))
-                    pygame.draw.circle(surf, col, (ix - 8, iy), 9)
-                    if self.chop_item.get("chopped"):
-                        pygame.draw.line(surf, C["lime"], (ix - 4, iy + 3), (ix + 8, iy - 5), 2)
-                    else:
-                        bar(surf, self.x + 2, self.y - 8, self.w - 4, 5,
-                            self.chop_prog, (50, 50, 50), C["orange"], 2)
+                self._draw_chop_item(surf, ix, iy)
             else:
                 pygame.draw.line(surf, (180, 180, 180), (ix - 10, iy + 8), (ix + 10, iy - 8), 3)
                 pygame.draw.line(surf, (130, 130, 130), (ix + 7, iy - 10), (ix + 12, iy - 5), 2)
@@ -240,30 +229,7 @@ class Station:
         elif self.kind == "pot":
             pygame.draw.circle(surf, (80, 80, 80), (ix, iy), 13)
             pygame.draw.circle(surf, (110, 110, 110), (ix, iy), 13, 1)
-
-            if self.pot_items:
-                n = min(len(self.pot_items), 3)
-                for i, item in enumerate(self.pot_items[:3]):
-                    ox = ix + (i - (n - 1) / 2) * 8
-                    img = get_img(item["id"], 10, 10)
-                    if img:
-                        surf.blit(img, (int(ox) - 5, iy - 5))
-                    else:
-                        bid = item["id"].replace("_c", "")
-                        col = INGS.get(bid, {}).get("color", (150, 150, 150))
-                        pygame.draw.circle(surf, col, (int(ox), iy), 5)
-
-            if self.pot_cooking or self.pot_cooked:
-                col_f = C["green"] if self.pot_cooked else C["orange"]
-                bar(surf, self.x + 2, self.y - 9, self.w - 4, 5, self.pot_prog, (40, 40, 40), col_f, 2)
-
-            if self.pot_cooked and self.pot_items:
-                burn_pct = min(1.0, self.pot_burn / BURN_TIME)
-                col_b = C["burn"] if burn_pct < 0.7 else C["red"]
-                bar(surf, self.x + 2, self.y - 16, self.w - 4, 4, burn_pct, (30, 20, 20), col_b, 2)
-
-            if self.pot_cooked and not (self.pot_burn >= BURN_TIME):
-                pygame.draw.circle(surf, C["green"], (ix + 12, iy - 10), 5)
+            self._draw_pot_items(surf, ix, iy)
 
             if self.pot_on and not self.pot_cooked:
                 t = time.time()
@@ -292,6 +258,43 @@ class Station:
             rr(surf, (160, 50, 90), (ix - 12, iy - 13, 24, 5), 2)
             for lx in (ix - 5, ix, ix + 5):
                 pygame.draw.line(surf, (200, 100, 130), (lx, iy - 6), (lx, iy + 6), 1)
+
+    def _draw_chop_item(self, surf, ix, iy):
+        item_id = self.chop_item["id"]
+        img = get_img(item_id, 22, 22)
+        if img:
+            surf.blit(img, (ix - 11, iy - 11))
+        else:
+            bid = item_id.replace("_c", "")
+            col = INGS.get(bid, {}).get("color", (150, 150, 150))
+            pygame.draw.circle(surf, col, (ix, iy), 11)
+        if self.chop_item.get("chopped"):
+            pygame.draw.line(surf, C["lime"], (ix - 4, iy + 3), (ix + 8, iy - 5), 2)
+        else:
+            bar(surf, self.x + 2, self.y - 8, self.w - 4, 5,
+                self.chop_prog, (50, 50, 50), C["orange"], 2)
+
+    def _draw_pot_items(self, surf, ix, iy):
+        if self.pot_items:
+            n = min(len(self.pot_items), 3)
+            for i, item in enumerate(self.pot_items[:3]):
+                ox = ix + (i - (n - 1) / 2) * 8
+                img = get_img(item["id"], 14, 14)
+                if img:
+                    surf.blit(img, (int(ox) - 7, iy - 7))
+                else:
+                    bid = item["id"].replace("_c", "")
+                    col = INGS.get(bid, {}).get("color", (150, 150, 150))
+                    pygame.draw.circle(surf, col, (int(ox), iy), 5)
+        if self.pot_cooking or self.pot_cooked:
+            col_f = C["green"] if self.pot_cooked else C["orange"]
+            bar(surf, self.x + 2, self.y - 9, self.w - 4, 5, self.pot_prog, (40, 40, 40), col_f, 2)
+        if self.pot_cooked and self.pot_items:
+            burn_pct = min(1.0, self.pot_burn / BURN_TIME)
+            col_b = C["burn"] if burn_pct < 0.7 else C["red"]
+            bar(surf, self.x + 2, self.y - 16, self.w - 4, 4, burn_pct, (30, 20, 20), col_b, 2)
+        if self.pot_cooked and not (self.pot_burn >= BURN_TIME):
+            pygame.draw.circle(surf, C["green"], (ix + 12, iy - 10), 5)
 
     def to_dict(self) -> dict:
         """Serialize station state for network transmission."""

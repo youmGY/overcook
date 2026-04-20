@@ -25,7 +25,7 @@ except Exception:
 from engine import screen, clock, FPS, F, get_img
 from constants import C, INGS, ING_KEYS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
 from utils import rr, txt, bar
-from ui import Popup, Btn, RecipeOverlay, IngredientOverlay
+from ui import Popup, Btn, RecipeOverlay, IngredientOverlay, SettingsOverlay
 from entities import Station, Player, Order, _load_completed_food_img
 from audio import AudioManager
 
@@ -201,6 +201,7 @@ class Game:
         self._hurry_bgm_active = False
         self.overlay = IngredientOverlay()
         self.recipe_overlay = RecipeOverlay()
+        self.settings_overlay = SettingsOverlay(self.audio)
         self._make_btns()
         self.reset()
 
@@ -479,9 +480,12 @@ class Game:
             self._cam_slot_rect = None
 
         self.btn_action = self.btn_acts_map["confirm"]
-        self.btn_start  = Btn(gw // 2 - 200, gh // 2 + 80, 400, 110, "Start", (184, 101, 30))
-        self.btn_pause_continue = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "▶ Continue", (40, 120, 60))
-        self.btn_pause_restart  = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "↺ Restart",  (120, 50, 50))
+        self.btn_start    = Btn(gw // 2 - 200, gh // 2 + 81, 400, 110, "Start", (184, 101, 30))
+        self.btn_settings = Btn(gw // 2 - 70,  gh // 2 + 205, 140, 42, "Settings", (55, 55, 110))
+        self.btn_pause_continue  = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "Continue", (40, 120, 60))
+        self.btn_pause_restart   = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "Restart",  (120, 50, 50))
+        self.btn_pause_home      = Btn(gw // 2 - 115, gh // 2 + 82, 110, 42, "Home",     (80, 60, 120))
+        self.btn_pause_settings  = Btn(gw // 2 + 5,   gh // 2 + 82, 110, 42, "Settings", (55, 55, 110))
 
     def _near(self):
         px, py = self.player.center()
@@ -835,6 +839,12 @@ class Game:
             self.overlay.rebuild()
 
         if self.state in ("title", "over"):
+            if self.settings_overlay.active:
+                return
+            if self.state == "title" and self.btn_settings.update(mpos, mpressed):
+                self.settings_overlay.active = True
+                self.audio.play("ui_click")
+                return
             if self.btn_start.update(mpos, mpressed):
                 self.reset(); self.state = "play"
                 self._spawn_order(); self._spawn_order()
@@ -845,6 +855,8 @@ class Game:
             return
 
         if self.state == "paused":
+            if self.settings_overlay.active:
+                return
             if self.btn_pause_continue.update(mpos, mpressed):
                 self.state = "play"
                 self.audio.play("ui_resume")
@@ -855,6 +867,14 @@ class Game:
                 self.audio.play("ui_click")
                 self.audio.play_bgm("play_loop")
                 self._hurry_bgm_active = False
+            if self.btn_pause_home.update(mpos, mpressed):
+                self.audio.stop_bgm()
+                self.audio.play_bgm("intro_bgm")
+                self.state = "title"
+                self.audio.play("ui_click")
+            if self.btn_pause_settings.update(mpos, mpressed):
+                self.settings_overlay.active = True
+                self.audio.play("ui_click")
             return
 
         # 로컬 플레이어의 overlay 상태 확인 (멀티플레이어에서 독립적)
@@ -947,7 +967,7 @@ class Game:
                 # Ignore stale gesture pulse that existed before lock started.
                 if gi.chop and not self._motion_gate_ready["chop"]:
                     pass
-                else:
+                elif self._near() is st:
                     self._act_chop(st, chop_action=True)
             elif (
                 self._lock_mode == "stir"
@@ -958,7 +978,7 @@ class Game:
             ):
                 if gi.stir and not self._motion_gate_ready["stir"]:
                     pass
-                else:
+                elif self._near() is st:
                     self._act_pot(st, stir_only=True)
             # Unlock when done
             if self._lock_mode == "chop" and (not st or not st.chop_item or st.chop_item.get("chopped")):
@@ -1271,6 +1291,9 @@ class Game:
             # Fallback to regular button drawing
             self.btn_start.draw(screen)
 
+        self.btn_settings.draw(screen)
+        self.settings_overlay.draw(screen)
+
     def draw_over(self):
         self.draw()
         gw, gh = screen.get_size()
@@ -1286,9 +1309,12 @@ class Game:
         gw, gh = screen.get_size()
         ov = pygame.Surface((gw, gh), pygame.SRCALPHA)
         ov.fill((5, 5, 20, 180)); screen.blit(ov, (0, 0))
-        txt(screen, "⏸ Paused", 40, C["gold"], gw // 2, gh // 2 - 60)
+        txt(screen, "Paused", 40, C["gold"], gw // 2, gh // 2 - 60)
         self.btn_pause_continue.draw(screen)
         self.btn_pause_restart.draw(screen)
+        self.btn_pause_home.draw(screen)
+        self.btn_pause_settings.draw(screen)
+        self.settings_overlay.draw(screen)
 
     # ── Multiplayer Methods ───────────────────────────────────────────
 
@@ -1414,13 +1440,13 @@ class Game:
             events = s.update(dt)
             for ev in events:
                 if ev == "chop_done":
-                    self._pop(s.cx(), s.y - 14, "✓ Chopped!", C["lime"])
+                    self._pop(s.cx(), s.y - 14, "Chopped!", C["lime"])
                     self.audio.play("chop_done")
                 elif ev == "cook_done":
-                    self._pop(s.cx(), s.y - 14, "✓ Cooked! Pick it up!", C["green"])
+                    self._pop(s.cx(), s.y - 14, "Cooked! Pick it up!", C["green"])
                     self.audio.play("cook_done")
                 elif ev == "burned":
-                    self._pop(s.cx(), s.y - 14, "🔥 BURNED!", C["burn"])
+                    self._pop(s.cx(), s.y - 14, "BURNED!", C["burn"])
                     self.audio.play("burn_alarm")
 
         # Update orders
@@ -1650,10 +1676,17 @@ def _main_solo(ui_mode: str, args):
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mpressed = True
                 click_pos = pygame.mouse.get_pos()
-                if game.overlay.active: overlay_click = click_pos
+                if game.settings_overlay.active:
+                    if game.settings_overlay.handle_mousedown(click_pos):
+                        mpressed = False
+                elif game.overlay.active: overlay_click = click_pos
                 else: station_click = click_pos
+            if event.type == pygame.MOUSEMOTION:
+                if game.settings_overlay.active:
+                    game.settings_overlay.handle_mousemove(event.pos)
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
+                game.settings_overlay.handle_mouseup(event.pos)
 
         move_dir = 0
         if held["left"]:    move_dir = -1

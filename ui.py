@@ -212,3 +212,97 @@ class IngredientOverlay:
             if rect.collidepoint(mpos):
                 return key
         return None
+
+
+class SettingsOverlay:
+    PANEL_W, PANEL_H = 420, 290
+
+    def __init__(self, audio):
+        self.audio = audio
+        self.active = False
+        self._dragging = None  # "bgm" or "sfx"
+
+    def _rects(self):
+        gw, gh = screen.get_size()
+        cx, cy = gw // 2, gh // 2
+        px = cx - self.PANEL_W // 2
+        py = cy - self.PANEL_H // 2
+        track_w = self.PANEL_W - 120
+        bgm_track = pygame.Rect(px + 70, py + 100, track_w, 8)
+        sfx_track = pygame.Rect(px + 70, py + 180, track_w, 8)
+        close_rect = pygame.Rect(cx - 55, py + self.PANEL_H - 52, 110, 38)
+        return px, py, bgm_track, sfx_track, close_rect
+
+    def _panel_rect(self):
+        px, py, _, _, _ = self._rects()
+        return pygame.Rect(px, py, self.PANEL_W, self.PANEL_H)
+
+    def _vol_from_mouse(self, mpos, track):
+        return max(0.0, min(1.0, (mpos[0] - track.x) / track.w))
+
+    def handle_mousedown(self, mpos):
+        if not self.active:
+            return False
+        px, py, bgm_track, sfx_track, close_rect = self._rects()
+        if not self._panel_rect().collidepoint(mpos):
+            self.active = False
+            return True
+        if close_rect.collidepoint(mpos):
+            self.active = False
+            return True
+        if bgm_track.inflate(0, 28).collidepoint(mpos):
+            self._dragging = "bgm"
+            self.audio.set_bgm_volume(self._vol_from_mouse(mpos, bgm_track))
+            return True
+        if sfx_track.inflate(0, 28).collidepoint(mpos):
+            self._dragging = "sfx"
+            self.audio.set_sfx_volume(self._vol_from_mouse(mpos, sfx_track))
+            return True
+        return True
+
+    def handle_mouseup(self, mpos):
+        self._dragging = None
+
+    def handle_mousemove(self, mpos):
+        if not self._dragging:
+            return
+        _, _, bgm_track, sfx_track, _ = self._rects()
+        if self._dragging == "bgm":
+            self.audio.set_bgm_volume(self._vol_from_mouse(mpos, bgm_track))
+        else:
+            self.audio.set_sfx_volume(self._vol_from_mouse(mpos, sfx_track))
+
+    def _draw_slider(self, surf, track, vol, label):
+        txt(surf, label, 14, C["white"], track.x - 8, track.centery, anchor="midright")
+        pygame.draw.rect(surf, (55, 55, 100), track, border_radius=4)
+        filled = pygame.Rect(track.x, track.y, int(vol * track.w), track.h)
+        if filled.w > 0:
+            pygame.draw.rect(surf, (210, 160, 50), filled, border_radius=4)
+        hx = track.x + int(vol * track.w)
+        pygame.draw.circle(surf, C["white"], (hx, track.centery), 11)
+        pygame.draw.circle(surf, (180, 140, 40), (hx, track.centery), 8)
+        pct = F[12].render(f"{int(vol * 100)}%", True, (180, 180, 220))
+        surf.blit(pct, (track.right + 10, track.centery - pct.get_height() // 2))
+
+    def draw(self, surf):
+        if not self.active:
+            return
+        gw, gh = screen.get_size()
+        ov = pygame.Surface((gw, gh), pygame.SRCALPHA)
+        ov.fill((0, 0, 0, 160))
+        surf.blit(ov, (0, 0))
+
+        px, py, bgm_track, sfx_track, close_rect = self._rects()
+        rr(surf, (18, 22, 52), (px, py, self.PANEL_W, self.PANEL_H), 14)
+        pygame.draw.rect(surf, (70, 60, 150), (px, py, self.PANEL_W, self.PANEL_H), 2, border_radius=14)
+
+        txt(surf, "Settings", 18, C["gold"], px + self.PANEL_W // 2, py + 28)
+        pygame.draw.line(surf, (50, 50, 100), (px + 20, py + 50), (px + self.PANEL_W - 20, py + 50), 1)
+
+        self._draw_slider(surf, bgm_track, self.audio._bgm_vol, "BGM")
+        self._draw_slider(surf, sfx_track, self.audio._sfx_vol, "SFX")
+
+        mpos = pygame.mouse.get_pos()
+        col = (60, 130, 80) if close_rect.collidepoint(mpos) else (40, 100, 60)
+        rr(surf, col, close_rect, 8)
+        txt(surf, "Close", 14, C["white"], close_rect.centerx, close_rect.centery)
