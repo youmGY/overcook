@@ -183,7 +183,6 @@ class Game:
         local_player_id: int = 0,
         player_name: str = "Player 1",
         audio: "AudioManager | None" = None,
-        settings_state=None,
     ):
         self.ui_mode = ui_mode
         self.use_camera_ui = ui_mode != "test"
@@ -233,7 +232,7 @@ class Game:
         self._hurry_bgm_active = False
         self.overlay = IngredientOverlay()
         self.recipe_overlay = RecipeOverlay()
-        self.settings_overlay = SettingsOverlay(self.audio, settings_state)
+        self.settings_overlay = SettingsOverlay(self.audio)
         self._make_btns()
         # Horizontal inset from both screen edges for the station row.
         # Increase to pull left/right stations closer to the center.
@@ -469,13 +468,24 @@ class Game:
 
     def _recipe_panel_rect(self):
         gw, gh = screen.get_size()
-        HUD_H = 44
+        HUD_H = 44 # 상단 HUD(점수/타이머)의 높이
         gy = self._gy()
         station_top = gy - Station.SH - int(self.station_row_offset) - 40
-        pad = 8
+        
+        # 📌 1. 좌우 여백 조절 (숫자를 키우면 화면 안쪽으로 더 들어옵니다)
+        pad = 8 
+        
+        # 📌 2. Y축(세로) 시작 위치 조절 (더 밑으로 내리고 싶다면 패딩을 더하세요. 예: HUD_H + pad + 20)
+        start_y = HUD_H + pad + 45
+
         full_h = max(70, station_top - HUD_H - pad * 2)
-        reduced_h = int(full_h * 0.82)
-        return (pad, HUD_H + pad, gw - pad * 2, reduced_h)
+        
+        # 📌 3. 전체 영역의 높이 조절 (0.82 비율을 1.0으로 하면 위아래로 더 길어집니다)
+        reduced_h = int(full_h * 0.6) 
+        
+        # (시작X, 시작Y, 가로길이, 세로길이) 순서입니다.
+        # 화면 좌우 너비를 좁히고 싶다면 gw - pad * 2 부분에서 추가로 값을 빼주면 됩니다.
+        return (pad, start_y, gw - pad * 2, reduced_h)
 
     def _camera_rect_from_controls(self):
         return getattr(self, "_cam_slot_rect", None)
@@ -1361,22 +1371,14 @@ class Game:
         rx, ry, rw, rh = self._recipe_panel_rect()
         if rh < 60: return
 
-        rr(screen, (16, 20, 48), (rx, ry, rw, rh), 10)
-        pygame.draw.rect(screen, (45, 40, 100), (rx, ry, rw, rh), 1, border_radius=10)
-
-        title_s = F[14].render("Current Orders", True, C["gold"])
-        screen.blit(title_s, (rx + 10, ry + 6))
-
         active_orders = [o for o in self.orders if o.status == "active"]
         if not active_orders:
-            no_order_s = F[12].render("No active orders", True, (150, 150, 150))
-            screen.blit(no_order_s, (rx + 10, ry + 35))
             return
 
         n = len(active_orders)
-        TITLE_H = 24
-        area_y = ry + TITLE_H
-        area_h = rh - TITLE_H - 4
+        # 전체 패널 배경과 타이틀이 없어졌으므로 영역을 전부 카드가 차지하게 조정
+        area_y = ry
+        area_h = rh
         area_w = rw - 12
 
         card_w = area_w // n - 6
@@ -1400,21 +1402,25 @@ class Game:
 
             if cy_ + card_h > ry + rh - 2: break
 
-            rr(screen, (24, 30, 62), (cx_, cy_, card_w, card_h), 6)
-            pygame.draw.rect(screen, (55, 48, 115), (cx_, cy_, card_w, card_h), 1, border_radius=6)
+            # 반투명 베이지색 레시피 보드 (카드)
+            card_bg = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
+            pygame.draw.rect(card_bg, (245, 235, 215, 210), (0, 0, card_w, card_h), border_radius=8)
+            screen.blit(card_bg, (cx_, cy_))
+            # 테두리 라인
+            pygame.draw.rect(screen, (200, 180, 150), (cx_, cy_, card_w, card_h), 2, border_radius=8)
 
-            inner_y = cy_ + 4
+            inner_y = cy_ + 6
 
-            # Completed dish thumbnail next to recipe name
-            name_s = F[14].render(rec["name"], True, C["white"])
+            # 텍스트 색상 어둡게 조정 (배경이 밝아졌으므로)
+            name_col = (60, 50, 40)
+            name_s = F[14].render(rec["name"], True, name_col)
             if name_s.get_width() > card_w - 40:
-                name_s = F[12].render(rec["name"], True, C["white"])
+                name_s = F[12].render(rec["name"], True, name_col)
             text_h = name_s.get_height()
 
             dish_thumb = _load_completed_food_img(f"{rec['name']}.png", 32, 32)
             thumb_offset = 0
             if dish_thumb:
-                # Crop transparent padding from the thumbnail for tighter fit
                 mask = pygame.mask.from_surface(dish_thumb)
                 brect = mask.get_bounding_rects()
                 if brect:
@@ -1424,21 +1430,21 @@ class Game:
                     dish_thumb = dish_thumb.subsurface(cr)
                 th = dish_thumb.get_height()
                 tw = dish_thumb.get_width()
-                # Vertically center thumb with text
                 thumb_y = inner_y + text_h // 2 - th // 2
-                screen.blit(dish_thumb, (cx_ + 4, thumb_y))
-                thumb_offset = tw + 4
+                screen.blit(dish_thumb, (cx_ + 6, thumb_y))
+                thumb_offset = tw + 6
 
-            screen.blit(name_s, (cx_ + 4 + thumb_offset, inner_y))
+            screen.blit(name_s, (cx_ + 6 + thumb_offset, inner_y))
 
-            pts_s = F[12].render(f"+{rec['pts']}", True, C["gold"])
-            screen.blit(pts_s, (cx_ + card_w - pts_s.get_width() - 4, inner_y))
-            inner_y += max(name_s.get_height(), 20) + 2
+            # 점수 색상 (녹색)
+            pts_s = F[12].render(f"+{rec['pts']}", True, (34, 139, 34))
+            screen.blit(pts_s, (cx_ + card_w - pts_s.get_width() - 6, inner_y))
+            inner_y += max(name_s.get_height(), 20) + 4
 
-            dot_x = cx_ + 4
+            dot_x = cx_ + 6
             ing_size = 24
             for j, need in enumerate(rec["needs"]):
-                if dot_x + ing_size + 2 > cx_ + card_w - 4:
+                if dot_x + ing_size + 2 > cx_ + card_w - 6:
                     break
                 base = need.replace("_c", "")
                 img = get_img(base, ing_size, ing_size)
@@ -1449,23 +1455,26 @@ class Game:
                     col_dot = ing.get("color", (150, 150, 150))
                     pygame.draw.circle(screen, col_dot, (dot_x + ing_size // 2, inner_y + ing_size // 2), ing_size // 2)
                 dot_x += ing_size + 6
-            inner_y += ing_size + 4
+            inner_y += ing_size + 6
 
+            # 레시피 단계 텍스트 색상 (짙은 갈색)
+            step_col = (100, 90, 80)
             for idx, step in enumerate(rec.get("steps", [])):
                 step_txt = f"{idx + 1}. {step}"
-                step_s = F[11].render(step_txt, True, (200, 200, 100)) if 11 in F \
-                         else F[12].render(step_txt[:22], True, (200, 200, 100))
-                if step_s.get_width() > card_w - 8:
+                step_s = F[11].render(step_txt, True, step_col) if 11 in F \
+                         else F[12].render(step_txt[:22], True, step_col)
+                if step_s.get_width() > card_w - 12:
                     step_txt = f"{idx + 1}. {step[:18]}"
-                    step_s = F[11].render(step_txt, True, (200, 200, 100)) if 11 in F \
-                             else F[12].render(step_txt, True, (200, 200, 100))
-                screen.blit(step_s, (cx_ + 4, inner_y))
-                inner_y += step_s.get_height() + 1
+                    step_s = F[11].render(step_txt, True, step_col) if 11 in F \
+                             else F[12].render(step_txt, True, step_col)
+                screen.blit(step_s, (cx_ + 6, inner_y))
+                inner_y += step_s.get_height() + 2
 
+            # 조리 상태 배지
             badge_lbl = "cook" if rec["cook"] else "raw"
-            badge_col = C["orange"] if rec["cook"] else C["lime"]
+            badge_col = (200, 80, 20) if rec["cook"] else (40, 140, 40)
             bs = F[12].render(badge_lbl, True, badge_col)
-            screen.blit(bs, (cx_ + card_w - bs.get_width() - 4, cy_ + card_h - bs.get_height() - 3))
+            screen.blit(bs, (cx_ + card_w - bs.get_width() - 6, cy_ + card_h - bs.get_height() - 4))
 
     def _draw_hud(self, gw, gh):
         HH = 84
@@ -1485,7 +1494,7 @@ class Game:
             ox -= 142
             o.draw(screen, ox, 2, w=140)
 
-        hint = self._hint() if self.settings_overlay.amateur_mode else None
+        hint = self._hint()
         if hint:
             hs = F[12].render(hint, True, (200, 200, 200))
             hw = hs.get_width() + 16; hh2 = hs.get_height() + 8
@@ -2206,7 +2215,6 @@ def _main_multiplayer(ui_mode: str, args):
                         local_player_id=0,
                         player_name=args.name,
                         audio=lobby_ui.audio,
-                        settings_state=lobby_ui.settings_state,
                     )
                     game.set_mp_player_names(player_names)
                     game.reset()
@@ -2290,7 +2298,6 @@ def _main_multiplayer(ui_mode: str, args):
                         local_player_id=client.player_id,
                         player_name=args.name,
                         audio=lobby_ui.audio,
-                        settings_state=lobby_ui.settings_state,
                     )
                     game.set_mp_player_names(player_names)
                     game.reset()
