@@ -1,6 +1,8 @@
 import pygame
 import os
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 pygame.init()
 
 W, H = 1024, 600
@@ -37,7 +39,7 @@ def get_img(ing_id, w, h):
     if key in IMG_CACHE:
         return IMG_CACHE[key]
 
-    base_path = f"assets/ingredients/{ing_id}.png"
+    base_path = os.path.join(_ROOT, "assets", "images", "ingredients", f"{ing_id}.png")
     if not os.path.exists(base_path):
         IMG_CACHE[key] = None
         return None

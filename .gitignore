@@ -1,40 +1,25 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.Python
-
-# Virtual environments
-.venv/
-venv/
-env/
-.env
-
-# Distribution / packaging
+*.egg-info/
 dist/
 build/
-*.egg-info/
+.venv/
+venv/
 *.egg
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Logs
+# Runtime
+game.log
 *.log
 
 # IDE
 .vscode/
 .idea/
 *.swp
-*.swo
 
-# macOS
+# OS
 .DS_Store
+Thumbs.db
 
-# Jupyter
-.ipynb_checkpoints/
-
-game.log
+# MediaPipe / OpenCV caches
+*.pyc
