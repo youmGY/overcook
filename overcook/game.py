@@ -233,6 +233,13 @@ class Game:
         self.recipe_overlay = RecipeOverlay()
         self.settings_overlay = SettingsOverlay(self.audio)
         self._make_btns()
+        # Horizontal inset from both screen edges for the station row.
+        # Increase to pull left/right stations closer to the center.
+        self.station_side_inset = 30
+        # Additional right shift for stations except the first one (trash).
+        self.station_right_shift_after_first = 19
+        # Positive value moves station row downward; negative moves it upward.
+        self.station_row_offset = 15
         self.reset()
 
     def _load_start_btn(self):
@@ -364,7 +371,7 @@ class Game:
             self._player_highlights: dict = {pid: None for pid in self.players}  # pid → overlay highlighted index
         else:
             # Solo: single player
-            self.players = {0: Player(gw // 2 - 15, gy - 50, player_id=0, name="Player 1")}
+            self.players = {0: Player(gw // 2 - Player.PW // 2, gy - Player.PH, player_id=0, name="Player 1")}
             self.player = self.players[0]
             self._player_overlays = {0: False}
             self._player_highlights = {0: None}
@@ -393,14 +400,33 @@ class Game:
         self.gw, self.gh = gw, gh
 
         N   = 5
-        pad = 20
-        gap = (gw - 2 * pad - N * Station.SW) // (N - 1)
-        sy  = gy - Station.SH - 36
+        side_inset = int(self.station_side_inset)
+        available_w = gw - 2 * side_inset
+        total_station_w = N * Station.SW
+
+        # Keep all inter-station gaps identical while preserving symmetric side margins.
+        if available_w <= total_station_w:
+            side_inset = max(0, (gw - total_station_w) // 2)
+            gap = 0
+            start_x = side_inset
+        else:
+            gap = (available_w - total_station_w) // (N - 1)
+            used_w = total_station_w + gap * (N - 1)
+            start_x = side_inset + (available_w - used_w) // 2
+
+        # Keep station 1 fixed and move stations 2~5 to the right.
+        # Clamp so the last station stays within the screen.
+        max_extra_shift = max(0, gw - (start_x + (N - 1) * (Station.SW + gap) + Station.SW))
+        extra_shift = max(0, min(int(self.station_right_shift_after_first), max_extra_shift))
+
+        sy  = gy - Station.SH - int(self.station_row_offset)
 
         kinds = ["trash", "ing", "chop", "pot", "submit"]
         self.stations = []
         for i, k in enumerate(kinds):
-            sx = pad + i * (Station.SW + gap)
+            sx = start_x + i * (Station.SW + gap)
+            if i > 0:
+                sx += extra_shift
             self.stations.append(Station(k, sx, sy))
 
     def _get_station_idx(self, station) -> int:
@@ -443,7 +469,7 @@ class Game:
         gw, gh = screen.get_size()
         HUD_H = 44
         gy = self._gy()
-        station_top = gy - Station.SH - 36 - 40
+        station_top = gy - Station.SH - int(self.station_row_offset) - 40
         pad = 8
         full_h = max(70, station_top - HUD_H - pad * 2)
         reduced_h = int(full_h * 0.82)
@@ -602,6 +628,14 @@ class Game:
             if pygame.Rect(st.x, st.y, st.w, st.h).collidepoint(x, y):
                 return st
         return None
+
+    def _station_shortcuts_enabled(self) -> bool:
+        """Enable station quick-move controls.
+
+        Gesture mode depends on slot shortcuts (finger_1~5) for core navigation,
+        so keep shortcuts enabled whenever gesture input is active.
+        """
+        return self.settings_overlay.amateur_mode or self.use_gesture
 
     def _find_submit_dish(self):
         h = self.player.holding
@@ -1099,8 +1133,8 @@ class Game:
             if self._lock_mode in ("chop", "stir"):
                 move_dir = 0
             else:
-                move_to_slot = gi.move_to_slot
-                clicked_station = self._station_at_point(gi.station_click)
+                move_to_slot = gi.move_to_slot if self._station_shortcuts_enabled() else None
+                clicked_station = self._station_at_point(gi.station_click) if self._station_shortcuts_enabled() else None
                 if clicked_station:
                     self.player.x = float(clicked_station.cx() - Player.PW // 2)
                     self.player.y = float(self._gy() - Player.PH)
@@ -1177,8 +1211,8 @@ class Game:
                 self._thumbs_up_held = True
                 self._move_blocked = True
         else:
-            move_to_slot = gi.move_to_slot
-            clicked_station = self._station_at_point(gi.station_click)
+            move_to_slot = gi.move_to_slot if self._station_shortcuts_enabled() else None
+            clicked_station = self._station_at_point(gi.station_click) if self._station_shortcuts_enabled() else None
             if clicked_station:
                 self.player.x = float(clicked_station.cx() - Player.PW // 2)
                 self.player.y = float(self._gy() - Player.PH)
@@ -1285,15 +1319,13 @@ class Game:
             pygame.draw.line(screen, (*C["ground_line"], 100), (0, gy), (gw, gy), 2)
             screen.fill((8, 8, 26), (0, gy + 7, gw, gh - gy - 7))
 
-        for s in self.stations: s.draw(screen, gy)
+        show_station_labels = self.settings_overlay.amateur_mode
+        show_station_boxes = self.settings_overlay.amateur_mode
+        for s in self.stations:
+            s.draw(screen, gy, show_label=show_station_labels, show_box=show_station_boxes)
 
         # 로컬 플레이어의 overlay 상태 확인
         local_overlay_active = self._player_overlays.get(self.local_player_id, False)
-        
-        ns = self._near()
-        if ns and not local_overlay_active:
-            pygame.draw.rect(screen, (*C["yellow"], 200),
-                             (ns.x - 2, ns.y - 2, ns.w + 4, ns.h + 4), 2, border_radius=8)
 
         # Draw all players (multiplayer support)
         for pid, p in self.players.items():
@@ -1397,7 +1429,7 @@ class Game:
             inner_y += max(name_s.get_height(), 20) + 2
 
             dot_x = cx_ + 4
-            ing_size = 20
+            ing_size = 24
             for j, need in enumerate(rec["needs"]):
                 if dot_x + ing_size + 2 > cx_ + card_w - 4:
                     break
@@ -1620,8 +1652,8 @@ class Game:
             # Fix H4: always run player physics so gravity/grounding work while locked
             self.player.update(0, dt, gw, self._gy())
         else:
-            move_to_slot = gi.move_to_slot
-            clicked_station = self._station_at_point(gi.station_click)
+            move_to_slot = gi.move_to_slot if self._station_shortcuts_enabled() else None
+            clicked_station = self._station_at_point(gi.station_click) if self._station_shortcuts_enabled() else None
             if clicked_station:
                 self.player.x = float(clicked_station.cx() - Player.PW // 2)
                 self.player.y = float(self._gy() - Player.PH)
@@ -1905,7 +1937,7 @@ def _main_single(ui_mode: str, args):
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = True
                 if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = True
-                if event.key in _SLOT_KEYS and game.state == "play":
+                if event.key in _SLOT_KEYS and game.state == "play" and game._station_shortcuts_enabled():
                     _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
                 if event.key in (pygame.K_z, pygame.K_SPACE):
                     if game.state == "play": _gi_frame["confirm"] = True
@@ -1952,7 +1984,7 @@ def _main_single(ui_mode: str, args):
                     pass  # consumed by settings overlay
                 elif game._player_overlays.get(game.local_player_id, False):
                     overlay_click = click_pos
-                else:
+                elif game._station_shortcuts_enabled():
                     station_click = click_pos
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
@@ -1997,6 +2029,9 @@ def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) ->
             if game._move_blocked:
                 gesture_gi.move_to_slot = None
                 game._move_blocked = False
+            # Station quick-slot gesture is an amateur-mode-only control.
+            if not game._station_shortcuts_enabled():
+                gesture_gi.move_to_slot = None
             # Update held state: reset when thumbs_up is no longer seen
             game._thumbs_up_held = any_thumbs_up
         else:
@@ -2077,7 +2112,7 @@ def _main_multiplayer(ui_mode: str, args):
                                 game.state = "paused"
                                 game.audio.play("ui_pause")
                                 game.audio.pause_bgm()
-                        if event.key in _SLOT_KEYS:
+                        if event.key in _SLOT_KEYS and game._station_shortcuts_enabled():
                             _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
                         if event.key in (pygame.K_z, pygame.K_SPACE):
                             _gi_frame["confirm"] = True
@@ -2104,7 +2139,7 @@ def _main_multiplayer(ui_mode: str, args):
                     pass  # consumed by lobby settings overlay
                 elif game and game._player_overlays.get(getattr(game, 'local_player_id', 0), False):
                     overlay_click = click_pos
-                elif lobby_state.startswith("playing"):
+                elif lobby_state.startswith("playing") and game and game._station_shortcuts_enabled():
                     station_click = click_pos
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False

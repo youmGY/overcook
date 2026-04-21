@@ -107,8 +107,8 @@ def _get_completed_food_img(holding, w, h):
 
 
 class Station:
-    SW = 160
-    SH = 50
+    SW = 180
+    SH = 62
 
     def __init__(self, kind, sx, sy):
         self.kind = kind
@@ -168,7 +168,7 @@ class Station:
         return events
 
 
-    def draw(self, surf, gy):
+    def draw(self, surf, gy, show_label=True, show_box=True):
         if self.kind == "ing":
             base, top = C["ing_base"], C["ing_top"]
         elif self.kind == "chop":
@@ -183,13 +183,15 @@ class Station:
             base, top = C["plate_base"], C["plate_top"]
 
         # rr(surf, base, (self.x + 8, self.y + self.h, self.w - 16, gy - self.y - self.h), 2)
-        rr(surf, top, (self.x, self.y, self.w, self.h), 6)
-        surf.fill((255, 255, 255, 15), (self.x + 5, self.y + 2, self.w - 10, 3))
+        if show_box:
+            rr(surf, top, (self.x, self.y, self.w, self.h), 6)
+            surf.fill((255, 255, 255, 15), (self.x + 5, self.y + 2, self.w - 10, 3))
 
-        s = F[14].render(self._station_label(), True, (220, 220, 220))
-        surf.blit(s, (self.cx() - s.get_width() // 2, self.cy() - s.get_height() // 2))
+        if show_label:
+            s = F[14].render(self._station_label(), True, (220, 220, 220))
+            surf.blit(s, (self.cx() - s.get_width() // 2, self.cy() - s.get_height() // 2))
 
-        ix, iy = self.cx(), self.y - 18
+        ix, iy = self.cx(), self.y - 8
         self._draw_icon(surf, ix, iy)
 
     def _station_label(self):
@@ -203,11 +205,13 @@ class Station:
 
     def _draw_icon(self, surf, ix, iy):
         # Try to load icon image from assets
-        icon_img = _load_station_icon(self.kind, 60)
+        # Scale icon size with station dimensions so larger stations remain readable.
+        max_size = int(min(self.w * 0.6, self.h * 1.9))
+        icon_img = _load_station_icon(self.kind, max_size)
         if icon_img:
             img_w, img_h = icon_img.get_size()
             x = ix - img_w // 2
-            y = iy - img_h + 10
+            y = iy - img_h + 20
             surf.blit(icon_img, (int(x), int(y)))
             # Draw item overlays on top of the icon image
             if self.kind == "chop" and self.chop_item:
@@ -269,40 +273,44 @@ class Station:
         chopped = self.chop_item.get("chopped", False)
         # Use _c image after chopping, base image while in progress
         display_id = item_id if chopped else item_id.replace("_c", "")
-        img = get_img(display_id, 32, 32)
+        img = get_img(display_id, 38, 38)
         if img:
-            surf.blit(img, (ix - 16, iy - 16))
+            surf.blit(img, (ix - 19, iy - 19))
         else:
             base_id = item_id.replace("_c", "")
             col = INGS.get(base_id, {}).get("color", (150, 150, 150))
-            pygame.draw.circle(surf, col, (ix, iy), 16)
+            pygame.draw.circle(surf, col, (ix, iy), 19)
         if chopped:
             pygame.draw.line(surf, C["lime"], (ix - 6, iy + 4), (ix + 10, iy - 6), 2)
         else:
-            bar(surf, self.x + 2, self.y - 8, self.w - 4, 5,
+            bar(surf, self.x + 14, self.y + self.h + 6, self.w - 28, 5,
                 self.chop_prog, (50, 50, 50), C["orange"], 2)
 
     def _draw_pot_items(self, surf, ix, iy):
-        """Draw ingredients in the pot plus cooking/burn progress bars.
-        Always uses the base ingredient image so the icon is recognisable."""
+        """Draw ingredients in the pot plus cooking/burn progress bars."""
         if self.pot_items:
             n = min(len(self.pot_items), 3)
             for i, item in enumerate(self.pot_items[:3]):
-                ox = ix + (i - (n - 1) / 2) * 14
-                base_id = item["id"].replace("_c", "")  # always show original ingredient
-                img = get_img(base_id, 26, 26)
+                ox = ix + (i - (n - 1) / 2) * 16
+                item_id = item.get("id", "")
+                chopped = bool(item.get("chopped"))
+                display_id = item_id if chopped else item_id.replace("_c", "")
+                base_id = item_id.replace("_c", "")
+                img = get_img(display_id, 30, 30)
                 if img:
-                    surf.blit(img, (int(ox) - 13, iy - 13))
+                    surf.blit(img, (int(ox) - 15, iy - 15))
                 else:
                     col = INGS.get(base_id, {}).get("color", (150, 150, 150))
-                    pygame.draw.circle(surf, col, (int(ox), iy), 11)
+                    pygame.draw.circle(surf, col, (int(ox), iy), 13)
         if self.pot_cooking or self.pot_cooked:
             col_f = C["green"] if self.pot_cooked else C["orange"]
-            bar(surf, self.x + 2, self.y - 9, self.w - 4, 5, self.pot_prog, (40, 40, 40), col_f, 2)
+            bar(surf, self.x + 14, self.y + self.h + 6, self.w - 28, 5,
+                self.pot_prog, (40, 40, 40), col_f, 2)
         if self.pot_cooked and self.pot_items:
             burn_pct = min(1.0, self.pot_burn / BURN_TIME)
             col_b = C["burn"] if burn_pct < 0.7 else C["red"]
-            bar(surf, self.x + 2, self.y - 16, self.w - 4, 4, burn_pct, (30, 20, 20), col_b, 2)
+            bar(surf, self.x + 14, self.y + self.h + 14, self.w - 28, 4,
+                burn_pct, (30, 20, 20), col_b, 2)
         if self.pot_cooked and not (self.pot_burn >= BURN_TIME):
             pygame.draw.circle(surf, C["green"], (ix + 12, iy - 10), 5)
 
@@ -345,7 +353,7 @@ class Station:
 
 
 class Player:
-    PW, PH = 30, 40
+    PW, PH = 38, 50
 
     def __init__(self, x, y, player_id: int = 0, name: str = "Player 1"):
         self.x = float(x); self.y = float(y)
@@ -398,23 +406,23 @@ class Player:
         pc_dark = self._pc("dark")
         pc_hat = self._pc("hat")
 
-        pygame.draw.ellipse(surf, (0, 0, 0, 50), (px + 2, py + self.PH - 6, self.PW - 4, 7))
-        rr(surf, pc_dark, (px + 5,  py + 26 + ls,  10, 14), 3)
-        rr(surf, pc_hat,  (px + 17, py + 26 - ls,  10, 14), 3)
-        rr(surf, pc_body, (px + 2,  py + 14 + bob, 28, 18), 5)
-        rr(surf, C["apron"],     (px + 7,  py + 16 + bob, 18, 14), 3)
-        rr(surf, (200, 195, 180),(px + 9,  py + 18 + bob, 14, 10), 2)
-        rr(surf, pc_body, (px + (26 if f > 0 else 0),  py + 16 + bob - as_, 7, 11), 3)
-        rr(surf, pc_body, (px + (1  if f > 0 else 25), py + 16 + bob + as_, 7, 11), 3)
-        pygame.draw.circle(surf, C["char_face"], (px + 16, py + 10 + bob), 11)
-        rr(surf, C["white"],    (px + 7,  py + 1 + bob, 18, 8), 2)
-        rr(surf, (230, 230, 230),(px + 4, py + 7 + bob, 24, 4), 1)
+        pygame.draw.ellipse(surf, (0, 0, 0, 50), (px + 2, py + self.PH - 7, self.PW - 4, 9))
+        rr(surf, pc_dark, (px + 6,  py + 31 + ls,  11, 17), 3)
+        rr(surf, pc_hat,  (px + 21, py + 31 - ls,  11, 17), 3)
+        rr(surf, pc_body, (px + 3,  py + 18 + bob, 32, 22), 6)
+        rr(surf, C["apron"],     (px + 9,  py + 20 + bob, 20, 17), 3)
+        rr(surf, (200, 195, 180),(px + 11, py + 22 + bob, 16, 12), 2)
+        rr(surf, pc_body, (px + (32 if f > 0 else 0),  py + 21 + bob - as_, 8, 14), 3)
+        rr(surf, pc_body, (px + (0  if f > 0 else 30), py + 21 + bob + as_, 8, 14), 3)
+        pygame.draw.circle(surf, C["char_face"], (px + 19, py + 12 + bob), 13)
+        rr(surf, C["white"],    (px + 9,  py + 1 + bob, 20, 10), 2)
+        rr(surf, (230, 230, 230),(px + 5, py + 8 + bob, 28, 5), 1)
 
-        ex = px + 16 + f * 4
-        pygame.draw.circle(surf, pc_hat,       (ex,     py + 10 + bob), 2)
-        pygame.draw.circle(surf, (255, 255, 255),  (ex + 1, py + 9  + bob), 1)
+        ex = px + 19 + f * 5
+        pygame.draw.circle(surf, pc_hat,       (ex,     py + 12 + bob), 2)
+        pygame.draw.circle(surf, (255, 255, 255),  (ex + 1, py + 11 + bob), 1)
         pygame.draw.arc(surf, (80, 60, 30),
-                        (px + 12 + f, py + 12 + bob, 8, 5),
+                (px + 15 + f, py + 14 + bob, 8, 5),
                         math.pi + 0.2, 2 * math.pi - 0.2, 2)
 
         # Name label above player
@@ -429,11 +437,11 @@ class Player:
                            (name_x + name_lbl.get_width(), name_y + name_lbl.get_height() + 1), 2)
 
         if self.holding:
-            hx = px + 16 + f * 24
-            hy = py + 4 + bob
+            hx = px + 19 + f * 28
+            hy = py + 6 + bob
             item_id = self.holding.get("id", "")
             is_completed = bool(self.holding.get("cooked"))
-            item_size = 42 if is_completed else 26
+            item_size = 50 if is_completed else 32
             half = item_size // 2
 
             completed_img = _get_completed_food_img(self.holding, item_size, item_size)
@@ -457,7 +465,7 @@ class Player:
                      else C["green"] if self.holding.get("cooked") \
                      else C["lime"]  if self.holding.get("chopped") \
                      else ing.get("color", (150, 150, 150))
-                rad = 17 if is_completed else 13
+                rad = 20 if is_completed else 15
                 pygame.draw.circle(surf, col, (hx, hy), rad)
                 pygame.draw.circle(surf, (255, 255, 255, 50), (hx, hy), rad, 1)
                 if self.holding.get("burned"):

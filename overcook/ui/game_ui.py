@@ -99,7 +99,7 @@ class RecipeOverlay:
             ing_x = cx_ + 8
             ing_y = cy_ + 24
             for need in rec["needs"]:
-                img = get_img(need, 12, 12)
+                img = get_img(need, 14, 14)
                 if img:
                     surf.blit(img, (ing_x, ing_y - 6))
                 else:
@@ -107,7 +107,7 @@ class RecipeOverlay:
                     ing  = INGS.get(base, {})
                     dot_col = ing.get("color", (150, 150, 150))
                     pygame.draw.circle(surf, dot_col, (ing_x + 6, ing_y), 6)
-                ing_x += 18
+                ing_x += 20
 
             step_y = ing_y + 14
             for j, step in enumerate(rec.get("steps", [])):
@@ -175,11 +175,11 @@ class IngredientOverlay:
             border_w = 3 if selected else 2
             pygame.draw.rect(surf, border_col, rect, border_w, border_radius=10)
 
-            img = get_img(key, 40, 40)
+            img = get_img(key, 48, 48)
             if img:
-                surf.blit(img, (rect.centerx - 20, rect.y + 12))
+                surf.blit(img, (rect.centerx - 24, rect.y + 10))
             else:
-                pygame.draw.circle(surf, ing["color"], (rect.centerx, rect.y + 32), 20)
+                pygame.draw.circle(surf, ing["color"], (rect.centerx, rect.y + 34), 22)
 
             slot_s = F[12].render(str(i + 1), True, C["gold"])
             surf.blit(slot_s, (rect.x + 6, rect.y + 4))
