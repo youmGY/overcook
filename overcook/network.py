@@ -167,6 +167,37 @@ class _ClientSlot:
         self.ready = False
         self.alive = True
         self.input_queue: queue.Queue = queue.Queue(maxsize=8)
+        # Non-blocking outbound queue — sender thread drains this
+        self.send_queue: queue.Queue = queue.Queue(maxsize=32)
+        self._send_thread = threading.Thread(target=self._send_loop, daemon=True)
+        self._send_thread.start()
+
+    def _send_loop(self):
+        while self.alive:
+            try:
+                payload = self.send_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                _send_json(self.conn, payload)
+            except OSError as exc:
+                log.warning("Client %s send failed: %s", self.player_id, exc)
+                self.alive = False
+                break
+
+    def enqueue(self, payload: dict):
+        """Put payload into send queue, dropping oldest if full."""
+        try:
+            self.send_queue.put_nowait(payload)
+        except queue.Full:
+            try:
+                self.send_queue.get_nowait()  # drop oldest
+            except queue.Empty:
+                pass
+            try:
+                self.send_queue.put_nowait(payload)
+            except queue.Full:
+                pass
 
 
 # ── game server ───────────────────────────────────────────────────────
@@ -243,6 +274,7 @@ class GameServer:
                 continue
             try:
                 conn, addr = self._server_sock.accept()
+                conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             except socket.timeout:
                 continue
             except Exception:
@@ -382,27 +414,10 @@ class GameServer:
     # ── internal ──────────────────────────────────────────────────────
 
     def _broadcast(self, payload: dict):
-        dead = []
         with self._lock:
             for c in self._clients:
-                if not c.alive:
-                    dead.append(c)
-                    continue
-                try:
-                    _send_json(c.conn, payload)
-                except OSError as exc:
-                    log.warning("Client %s send failed: %s", c.player_id, exc)
-                    c.alive = False
-                    dead.append(c)
-        # Close dead connections outside the lock to avoid potential deadlock.
-        for c in dead:
-            try:
-                c.conn.close()
-            except OSError:
-                pass
-            with self._lock:
-                if c in self._clients:
-                    self._clients.remove(c)
+                if c.alive:
+                    c.enqueue(payload)
 
 
 # ── game client ───────────────────────────────────────────────────────
