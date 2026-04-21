@@ -182,6 +182,7 @@ class Game:
         is_server: bool = False,
         local_player_id: int = 0,
         player_name: str = "Player 1",
+        audio: "AudioManager | None" = None,
     ):
         self.ui_mode = ui_mode
         self.use_camera_ui = ui_mode != "test"
@@ -226,7 +227,7 @@ class Game:
         elif self.use_camera_ui:
             self._init_camera()
 
-        self.audio = AudioManager()
+        self.audio = audio if audio is not None else AudioManager()
         self.state = "title"
         self._hurry_bgm_active = False
         self.overlay = IngredientOverlay()
@@ -2203,6 +2204,7 @@ def _main_multiplayer(ui_mode: str, args):
                         is_server=True,
                         local_player_id=0,
                         player_name=args.name,
+                        audio=lobby_ui.audio,
                     )
                     game.set_mp_player_names(player_names)
                     game.reset()
@@ -2285,6 +2287,7 @@ def _main_multiplayer(ui_mode: str, args):
                         is_server=False,
                         local_player_id=client.player_id,
                         player_name=args.name,
+                        audio=lobby_ui.audio,
                     )
                     game.set_mp_player_names(player_names)
                     game.reset()
@@ -2315,6 +2318,7 @@ def _main_multiplayer(ui_mode: str, args):
                     game = None
                     server = None
                     lobby_state = "lobby_menu"
+                    lobby_ui.audio.play_bgm("intro_bgm")
                     mpressed = False
                     pygame.display.flip()
                     continue
@@ -2431,6 +2435,7 @@ def _main_multiplayer(ui_mode: str, args):
                     client = None
                     client_paused = False
                     lobby_state = "lobby_menu"
+                    lobby_ui.audio.play_bgm("intro_bgm")
                     mpressed = False
                     pygame.display.flip()
                     continue
