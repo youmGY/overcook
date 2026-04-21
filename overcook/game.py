@@ -1890,13 +1890,17 @@ def _main_solo(ui_mode: str, args):
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mpressed = True
                 click_pos = pygame.mouse.get_pos()
-                if game._player_overlays.get(game.local_player_id, False):
+                if game.settings_overlay.handle_mousedown(click_pos):
+                    pass  # consumed by settings overlay
+                elif game._player_overlays.get(game.local_player_id, False):
                     overlay_click = click_pos
                 else:
                     station_click = click_pos
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
                 game.settings_overlay.handle_mouseup(event.pos)
+            if event.type == pygame.MOUSEMOTION:
+                game.settings_overlay.handle_mousemove(event.pos)
 
         mpos = pygame.mouse.get_pos()
         gi, pipeline_frame = _collect_local_input(

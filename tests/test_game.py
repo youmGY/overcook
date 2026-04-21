@@ -30,8 +30,11 @@ class _FakeRect:
         self.x=x; self.y=y; self.w=w; self.h=h
         self.centerx=x+w//2; self.centery=y+h//2
         self.center=(self.centerx, self.centery)
-        self.bottom=y+h
-    def collidepoint(self, pos): return False
+        self.bottom=y+h; self.right=x+w
+    def collidepoint(self, pos):
+        return self.x <= pos[0] < self.x + self.w and self.y <= pos[1] < self.y + self.h
+    def inflate(self, dw, dh):
+        return _FakeRect(self.x - dw//2, self.y - dh//2, self.w + dw, self.h + dh)
     def __iter__(self): return iter((self.x, self.y, self.w, self.h))
 
 _pygame.Rect = _FakeRect
@@ -419,10 +422,15 @@ class TestOrder(unittest.TestCase):
         b = Order(self._recipe())
         self.assertNotEqual(a.id, b.id)
 
-    def test_id_monotonically_increases(self):
-        a = Order(self._recipe())
-        b = Order(self._recipe())
-        self.assertGreater(b.id, a.id)
+    def test_ids_unique_across_resets(self):
+        """IDs from different game sessions must not collide (uuid-based)."""
+        ids = {Order(self._recipe()).id for _ in range(50)}
+        self.assertEqual(len(ids), 50)
+
+    def test_id_is_string(self):
+        o = Order(self._recipe())
+        self.assertIsInstance(o.id, str)
+        self.assertTrue(len(o.id) > 0)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -955,6 +963,145 @@ class TestVegSaladUnsubmittable(unittest.TestCase):
         g.player.holding = raw_salad
         g.do_action()
         self.assertTrue(any("Nothing" in p.msg or "submit" in p.msg.lower() for p in g.popups))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SettingsOverlay — volume slider
+# ════════════════════════════════════════════════════════════════════════════
+class TestSettingsOverlay(unittest.TestCase):
+
+    def setUp(self):
+        from overcook.ui.game_ui import SettingsOverlay
+        from overcook.audio import AudioManager
+        # Stub AudioManager so it doesn't touch pygame.mixer
+        self.audio = MagicMock(spec=AudioManager)
+        self.audio.bgm_volume = 0.4
+        self.audio.sfx_volume = 0.5
+        self.overlay = SettingsOverlay(self.audio)
+        self.overlay.active = True
+
+    def test_initially_inactive(self):
+        from overcook.ui.game_ui import SettingsOverlay
+        ov = SettingsOverlay(self.audio)
+        self.assertFalse(ov.active)
+
+    def test_mousedown_on_bgm_track_starts_dragging(self):
+        """Click on the BGM slider area sets dragging and calls set_bgm_volume."""
+        _, _, bgm_track, _, _ = self.overlay._rects()
+        click = (bgm_track.x + bgm_track.w // 2, bgm_track.centery)
+        self.overlay.handle_mousedown(click)
+        self.assertEqual(self.overlay._dragging, "bgm")
+        self.audio.set_bgm_volume.assert_called_once()
+
+    def test_mousedown_on_sfx_track_starts_dragging(self):
+        """Click on the SFX slider area sets dragging and calls set_sfx_volume."""
+        _, _, _, sfx_track, _ = self.overlay._rects()
+        click = (sfx_track.x + sfx_track.w // 2, sfx_track.centery)
+        self.overlay.handle_mousedown(click)
+        self.assertEqual(self.overlay._dragging, "sfx")
+        self.audio.set_sfx_volume.assert_called_once()
+
+    def test_mousemove_updates_volume_while_dragging(self):
+        """Dragging after mousedown keeps calling the appropriate setter."""
+        _, _, bgm_track, _, _ = self.overlay._rects()
+        self.overlay.handle_mousedown((bgm_track.x, bgm_track.centery))
+        self.audio.set_bgm_volume.reset_mock()
+        self.overlay.handle_mousemove((bgm_track.x + bgm_track.w // 2, bgm_track.centery))
+        self.audio.set_bgm_volume.assert_called_once()
+
+    def test_mousemove_no_op_without_drag(self):
+        """handle_mousemove does nothing if not dragging."""
+        self.overlay.handle_mousemove((0, 0))
+        self.audio.set_bgm_volume.assert_not_called()
+        self.audio.set_sfx_volume.assert_not_called()
+
+    def test_mouseup_stops_dragging(self):
+        """handle_mouseup clears the dragging state."""
+        _, _, bgm_track, _, _ = self.overlay._rects()
+        self.overlay.handle_mousedown((bgm_track.x, bgm_track.centery))
+        self.assertEqual(self.overlay._dragging, "bgm")
+        self.overlay.handle_mouseup((0, 0))
+        self.assertIsNone(self.overlay._dragging)
+
+    def test_vol_from_mouse_clamped(self):
+        """Volume stays in [0, 1] regardless of cursor position."""
+        _, _, bgm_track, _, _ = self.overlay._rects()
+        far_left = (bgm_track.x - 200, bgm_track.centery)
+        far_right = (bgm_track.right + 200, bgm_track.centery)
+        self.assertEqual(self.overlay._vol_from_mouse(far_left, bgm_track), 0.0)
+        self.assertEqual(self.overlay._vol_from_mouse(far_right, bgm_track), 1.0)
+
+    def test_mousedown_outside_panel_closes_overlay(self):
+        """Clicking outside the panel closes the overlay."""
+        self.overlay.handle_mousedown((-999, -999))
+        self.assertFalse(self.overlay.active)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# _act_trash — only clears nearest chop board
+# ════════════════════════════════════════════════════════════════════════════
+class TestActTrash(unittest.TestCase):
+
+    def setUp(self):
+        engine.screen = _FakeSurface()
+        self.g = Game()
+        self.g.state = "play"
+
+    def test_trash_clears_held_item(self):
+        trash = next(s for s in self.g.stations if s.kind == "trash")
+        self.g.player.x = float(trash.cx() - Player.PW // 2)
+        self.g.player.y = float(trash.cy() - Player.PH // 2)
+        self.g.player.holding = {"id": "carrot", "label": "Carrot"}
+        self.g._act_trash(trash)
+        self.assertIsNone(self.g.player.holding)
+
+    def test_trash_clears_only_nearest_chop(self):
+        """Only the nearest occupied chop board is cleared, not all of them."""
+        chops = [s for s in self.g.stations if s.kind == "chop"]
+        if len(chops) < 1:
+            self.skipTest("Need at least one chop station")
+        for chop in chops:
+            chop.chop_item = {"id": "carrot", "label": "Carrot"}
+
+        trash = next(s for s in self.g.stations if s.kind == "trash")
+        self.g.player.holding = None
+        self.g.player.x = float(trash.cx() - Player.PW // 2)
+        self.g.player.y = float(trash.cy() - Player.PH // 2)
+        self.g._act_trash(trash)
+
+        cleared = sum(1 for c in chops if c.chop_item is None)
+        self.assertEqual(cleared, 1, "Exactly one chop board should be cleared")
+
+    def test_trash_nothing_to_trash_popup(self):
+        trash = next(s for s in self.g.stations if s.kind == "trash")
+        self.g.player.holding = None
+        for chop in self.g.stations:
+            if chop.kind == "chop":
+                chop.chop_item = None
+        self.g._act_trash(trash)
+        self.assertTrue(any("Nothing" in p.msg for p in self.g.popups))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Named constants sanity checks
+# ════════════════════════════════════════════════════════════════════════════
+class TestNamedConstants(unittest.TestCase):
+
+    def test_over_stir_threshold_greater_than_stir_actions(self):
+        from overcook.constants import OVER_STIR_THRESHOLD, STIR_ACTIONS
+        self.assertGreater(OVER_STIR_THRESHOLD, STIR_ACTIONS)
+
+    def test_interaction_range_positive(self):
+        from overcook.constants import INTERACTION_RANGE
+        self.assertGreater(INTERACTION_RANGE, 0)
+
+    def test_wrong_submit_penalty_positive(self):
+        from overcook.constants import WRONG_SUBMIT_PENALTY
+        self.assertGreater(WRONG_SUBMIT_PENALTY, 0)
+
+    def test_popup_lifetime_positive(self):
+        from overcook.constants import POPUP_LIFETIME_FRAMES
+        self.assertGreater(POPUP_LIFETIME_FRAMES, 0)
 
 
 if __name__ == "__main__":
