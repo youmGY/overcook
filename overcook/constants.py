@@ -46,11 +46,11 @@ INGS = {
 ING_KEYS = list(INGS.keys())
 
 RECIPES = [
-    {"name": "Tomato Soup", "pts": 100, "needs": ["tomato_c"], "cook": True,
+    {"name": "Tomato Soup", "pts": 80, "needs": ["tomato_c"], "cook": True,
      "steps": ["CHOP Tomato", "Add to Stove & Stir"]},
-    {"name": "Fried Rice", "pts": 110, "needs": ["rice","tomato_c"], "cook": True,
+    {"name": "Fried Rice", "pts": 100, "needs": ["rice","tomato_c"], "cook": True,
      "steps": ["Get Rice, CHOP Tomato", "Add all to Stove & Stir"]},
-    {"name": "Mushroom Stir-fry", "pts": 90, "needs": ["mushroom_c","onion_c"], "cook": True,
+    {"name": "Mushroom Stir-fry", "pts": 120, "needs": ["mushroom_c","onion_c"], "cook": True,
      "steps": ["CHOP Mushroom & Onion", "Add all to Stove & Stir"]},
     {"name": "Veg Curry", "pts": 150, "needs": ["carrot_c","onion_c","rice"], "cook": True,
      "steps": ["CHOP Carrot & Onion","Get Rice", "Add all to Stove & Stir"]},
@@ -62,13 +62,13 @@ RECIPES = [
     #  "steps": ["CHOP Tomato & Mushroom", "Mix & Plate (NO COOK)"]},  //not available right now
 ]
 
-BURN_TIME  = 8.0
+BURN_TIME  = 7.0
 COOK_TIME  = 5.0
 CHOP_TIME  = 3.0
 CHOP_ACTIONS = 4
 STIR_ACTIONS = 5
-ORDER_TIME = 60.0
-GAME_TIME  = 100.0
+ORDER_TIME = 45.0
+GAME_TIME  = 150.0
 
 # How many extra stirs beyond STIR_ACTIONS before the dish burns.
 OVER_STIR_THRESHOLD = STIR_ACTIONS + 5

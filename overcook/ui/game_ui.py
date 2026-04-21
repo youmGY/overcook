@@ -1,4 +1,26 @@
 import pygame
+import json
+import os
+
+_SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".overcook_settings.json")
+
+
+def _load_settings() -> dict:
+    try:
+        with open(_SETTINGS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_settings(data: dict):
+    try:
+        with open(_SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
 from ..engine import F, screen, get_img
 from ..constants import C, INGS, ING_KEYS, RECIPES, POPUP_LIFETIME_FRAMES
 from ..utils import rr, txt
@@ -222,6 +244,23 @@ class SettingsOverlay:
         self.active = False
         self.amateur_mode = False  # show Current Orders panel when True
         self._dragging = None  # "bgm" or "sfx"
+        self._load()
+
+    def _load(self):
+        s = _load_settings()
+        if "bgm_volume" in s:
+            self.audio.set_bgm_volume(float(s["bgm_volume"]))
+        if "sfx_volume" in s:
+            self.audio.set_sfx_volume(float(s["sfx_volume"]))
+        if "amateur_mode" in s:
+            self.amateur_mode = bool(s["amateur_mode"])
+
+    def _save(self):
+        _save_settings({
+            "bgm_volume": self.audio.bgm_volume,
+            "sfx_volume": self.audio.sfx_volume,
+            "amateur_mode": self.amateur_mode,
+        })
 
     def _rects(self):
         gw, gh = screen.get_size()
@@ -254,6 +293,7 @@ class SettingsOverlay:
             return True
         if amateur_rect.collidepoint(mpos):
             self.amateur_mode = not self.amateur_mode
+            self._save()
             return True
         if bgm_track.inflate(0, 28).collidepoint(mpos):
             self._dragging = "bgm"
@@ -267,6 +307,8 @@ class SettingsOverlay:
 
     def handle_mouseup(self, mpos):
         self._dragging = None
+        if True:  # save on every release (volume finalized)
+            self._save()
 
     def handle_mousemove(self, mpos):
         if not self._dragging:
