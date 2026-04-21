@@ -190,10 +190,8 @@ class Game:
         self._camera = None
         self._camera_error = None
         self._act_btn_info = self._build_act_btn_info()
-        self._title_bg_img = None
         self._start_btn_img = None
         self._settings_btn_img = None
-        self._load_title_bg()
         self._load_start_btn()
         self._load_settings_btn()
 
@@ -213,6 +211,8 @@ class Game:
         # Move-to-slot block: True for one frame after lock mode exits to prevent
         # accidental slot jumps caused by hand transitioning out of chop/stir pose.
         self._move_blocked: bool = False
+        self._game_bg_img = None
+        self._load_game_bg()
 
         if self.use_gesture:
             self._init_pipeline(
@@ -235,18 +235,6 @@ class Game:
         self._make_btns()
         self.reset()
 
-    def _load_title_bg(self):
-        """Load and cache the title screen background image."""
-        try:
-            _bg_path = os.path.join(_ROOT, "assets", "images", "ui", "Game_Screen.png")
-            if not os.path.exists(_bg_path):
-                return
-            self._title_bg_img = pygame.image.load(_bg_path)
-            log.info("Title background image loaded: %s", _bg_path)
-        except Exception as e:
-            log.error("Failed to load title background: %s", e)
-            self._title_bg_img = None
-
     def _load_start_btn(self):
         """Load and cache the start button image."""
         try:
@@ -267,6 +255,18 @@ class Game:
         except Exception as e:
             log.error("Failed to load settings button: %s", e)
             self._settings_btn_img = None
+
+    def _load_game_bg(self):
+        """Load and cache the in-game background image."""
+        try:
+            _bg_path = os.path.join(_ROOT, "assets", "game_bg.png")
+            if not os.path.exists(_bg_path):
+                return
+            self._game_bg_img = pygame.image.load(_bg_path)
+            log.info("Game background image loaded: %s", _bg_path)
+        except Exception as e:
+            log.error("Failed to load game background: %s", e)
+            self._game_bg_img = None
 
     def _build_act_btn_info(self):
         return [
@@ -1268,18 +1268,22 @@ class Game:
         gy = self._gy()
 
         screen.fill(C["bg"])
-        for y in range(0, gh, 32):
-            pygame.draw.line(screen, (*C["grid"], 20), (0, y), (gw, y), 1)
-        for x in range(0, gw, 36):
-            c = C["tile_a"] if (x // 36) % 2 == 0 else C["tile_b"]
-            screen.fill(c, (x, 0, 35, gy))
+        if self._game_bg_img:
+            bg_scaled = pygame.transform.smoothscale(self._game_bg_img, (gw, gh))
+            screen.blit(bg_scaled, (0, 0))
+        else:
+            for y in range(0, gh, 32):
+                pygame.draw.line(screen, (*C["grid"], 20), (0, y), (gw, y), 1)
+            for x in range(0, gw, 36):
+                c = C["tile_a"] if (x // 36) % 2 == 0 else C["tile_b"]
+                screen.fill(c, (x, 0, 35, gy))
 
-        screen.fill(C["ground"], (0, gy, gw, gh - gy))
-        for x in range(0, gw, 30):
-            c = C["tile_a"] if (x // 30) % 2 == 0 else C["tile_b"]
-            screen.fill(c, (x, gy, 29, 7))
-        pygame.draw.line(screen, (*C["ground_line"], 100), (0, gy), (gw, gy), 2)
-        screen.fill((8, 8, 26), (0, gy + 7, gw, gh - gy - 7))
+            screen.fill(C["ground"], (0, gy, gw, gh - gy))
+            for x in range(0, gw, 30):
+                c = C["tile_a"] if (x // 30) % 2 == 0 else C["tile_b"]
+                screen.fill(c, (x, gy, 29, 7))
+            pygame.draw.line(screen, (*C["ground_line"], 100), (0, gy), (gw, gy), 2)
+            screen.fill((8, 8, 26), (0, gy + 7, gw, gh - gy - 7))
 
         for s in self.stations: s.draw(screen, gy)
 
@@ -1306,7 +1310,7 @@ class Game:
         self.recipe_overlay.draw(screen)
 
         self._draw_hud(gw, gh)
-        if not local_overlay_active:
+        if not local_overlay_active and self.settings_overlay.amateur_mode:
             self._draw_recipes_panel()
 
         if self.state == "play":
@@ -1454,24 +1458,15 @@ class Game:
 
     def draw_title(self):
         gw, gh = screen.get_size()
-        
-        # Draw background image if available, otherwise fill with color
-        if self._title_bg_img:
-            bg_scaled = pygame.transform.smoothscale(self._title_bg_img, (gw, gh))
-            screen.blit(bg_scaled, (0, 0))
-        else:
-            screen.fill(C["bg"])
-        
-        # Draw start button image if available
+        screen.fill(C["bg"])
+
         if self._start_btn_img:
             btn_rect = self.btn_start.rect
             btn_scaled = pygame.transform.smoothscale(self._start_btn_img, (btn_rect.width, btn_rect.height))
             screen.blit(btn_scaled, btn_rect.topleft)
         else:
-            # Fallback to regular button drawing
             self.btn_start.draw(screen)
 
-        # Draw settings button image if available
         if self._settings_btn_img:
             btn_rect = self.btn_settings.rect
             btn_scaled = pygame.transform.smoothscale(self._settings_btn_img, (btn_rect.width, btn_rect.height))
@@ -1847,8 +1842,11 @@ def main():
                         help="CLAHE tile grid size (default: 8)")
     parser.add_argument("--device", type=int, default=0,
                         help="Camera device index (default: 0)")
-    parser.add_argument("--multiplayer", action="store_true",
-                        help="Enable multiplayer mode (LAN lobby)")
+    parser.add_argument("--multiplayer", action="store_true", default=True,
+                        dest="multiplayer",
+                        help="Enable multiplayer mode (LAN lobby) [default: True]")
+    parser.add_argument("--single", action="store_true",
+                        help="Play in single player mode instead of multiplayer")
     parser.add_argument("--name", type=str, default="Player",
                         help="Player name for multiplayer")
     args = parser.parse_args()
@@ -1859,14 +1857,15 @@ def main():
     if args.active or args.gesture:
         ui_mode = "active"
 
-    if args.multiplayer:
-        _main_multiplayer(ui_mode, args)
+    # If --single flag is set, use single player mode; otherwise use multiplayer (default)
+    if args.single:
+        _main_single(ui_mode, args)
     else:
-        _main_solo(ui_mode, args)
+        _main_multiplayer(ui_mode, args)
 
 
-def _main_solo(ui_mode: str, args):
-    """Solo player game loop (original behavior)."""
+def _main_single(ui_mode: str, args):
+    """Single player game loop."""
     game = Game(
         ui_mode=ui_mode,
         use_gesture=args.gesture,
@@ -1877,7 +1876,7 @@ def _main_solo(ui_mode: str, args):
         clahe_grid=args.clahe_grid,
         device=args.device,
     )
-    game.audio.play_bgm("intro_bgm")
+    game._start_game_session()
     held      = {"left": False, "right": False}
     _gi_frame: dict = {}
     mpressed     = False
@@ -2036,6 +2035,7 @@ def _main_multiplayer(ui_mode: str, args):
     held = {"left": False, "right": False}
     mpressed = False
     click_pos = None
+    client_paused = False  # client-side local pause (server continues)
 
     _SLOT_KEYS = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3, pygame.K_4: 4, pygame.K_5: 5}
 
@@ -2095,9 +2095,11 @@ def _main_multiplayer(ui_mode: str, args):
                 mpressed = True
                 _click_this_frame = True
                 click_pos = pygame.mouse.get_pos()
-                # M1: route click through settings overlay first
+                # Route click through settings overlays first
                 if game and game.settings_overlay.handle_mousedown(click_pos):
-                    pass  # consumed by settings overlay
+                    pass  # consumed by game settings overlay
+                elif not lobby_state.startswith("playing") and lobby_ui.handle_mousedown(click_pos):
+                    pass  # consumed by lobby settings overlay
                 elif game and game._player_overlays.get(getattr(game, 'local_player_id', 0), False):
                     overlay_click = click_pos
                 elif lobby_state.startswith("playing"):
@@ -2105,8 +2107,10 @@ def _main_multiplayer(ui_mode: str, args):
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
                 if game: game.settings_overlay.handle_mouseup(event.pos)
+                if not lobby_state.startswith("playing"): lobby_ui.handle_mouseup(event.pos)
             if event.type == pygame.MOUSEMOTION:
                 if game: game.settings_overlay.handle_mousemove(event.pos)
+                if not lobby_state.startswith("playing"): lobby_ui.handle_mousemove(event.pos)
 
         mpos = pygame.mouse.get_pos()
 
@@ -2129,8 +2133,8 @@ def _main_multiplayer(ui_mode: str, args):
                 lobby_state = "lobby_join"
                 lobby_ui.rooms = []
                 lobby_ui.selected_room = -1
-            elif action == "solo":
-                _main_solo(ui_mode, args)
+            elif action == "single":
+                _main_single(ui_mode, args)
                 return
             lobby_ui.draw_menu()
 
@@ -2166,6 +2170,7 @@ def _main_multiplayer(ui_mode: str, args):
                     game.audio.play_bgm("play_loop")
                     server.start_game()
                     lobby_state = "playing_host"
+                    mpressed = False  # prevent lobby click from bleeding into game buttons
                     continue
                 else:
                     lobby_ui.status_text = "Not all players ready!"
@@ -2244,6 +2249,7 @@ def _main_multiplayer(ui_mode: str, args):
                     game.audio.play("start_whistle")  # L3
                     game.audio.play_bgm("play_loop")
                     lobby_state = "playing_client"
+                    mpressed = False  # prevent lobby click from bleeding into game buttons
             except Exception:
                 pass
 
@@ -2259,10 +2265,30 @@ def _main_multiplayer(ui_mode: str, args):
                     server.broadcast_game_over(game.score)
                     server.stop()
                     game.draw_over()
+                elif game.state == "title":
+                    # Home button pressed — return to lobby
+                    server.stop()
+                    game.shutdown()
+                    game = None
+                    server = None
+                    lobby_state = "lobby_menu"
+                    mpressed = False
+                    pygame.display.flip()
+                    continue
                 elif game.state == "paused":
                     game.draw_paused()
                 pygame.display.flip()
                 continue
+
+            # Sync: remove players that disconnected
+            alive_pids = set([0] + server.get_alive_player_ids())
+            for pid in list(game.players.keys()):
+                if pid not in alive_pids:
+                    del game.players[pid]
+                    game._lock_modes.pop(pid, None)
+                    game._player_overlays.pop(pid, None)
+                    game._player_highlights.pop(pid, None)
+                    game._motion_gates_per_player.pop(pid, None)
 
             # Host: collect inputs + server_tick + broadcast
             host_gi, pipeline_frame = _collect_local_input(
@@ -2324,19 +2350,72 @@ def _main_multiplayer(ui_mode: str, args):
                 game.shutdown()
                 return
 
+            # Local pause: client-side pause (server continues running)
+            if client_paused:
+                # Receive server state but preserve local pause
+                try:
+                    state = client.state_queue.get_nowait()
+                    saved_state = game.state
+                    game.apply_state(state)
+                    if game.state != "over":
+                        game.state = saved_state
+                except Exception:
+                    pass
+                try:
+                    event_msg = client.event_queue.get_nowait()
+                    if event_msg.get("type") == "game_over":
+                        game.state = "over"
+                        game.score = event_msg.get("score", game.score)
+                        client_paused = False
+                except Exception:
+                    pass
+                if game.state == "over":
+                    game.draw_over()
+                    pygame.display.flip()
+                    client.close()
+                    game.shutdown()
+                    return
+                game.update(dt, GameInput(), mpos, _btn_pressed)
+                if game.state == "play":
+                    client_paused = False
+                    game.audio.play("ui_resume")
+                    game.audio.unpause_bgm()
+                elif game.state == "title":
+                    # Home button pressed — return to lobby
+                    client.close()
+                    game.shutdown()
+                    game = None
+                    client = None
+                    client_paused = False
+                    lobby_state = "lobby_menu"
+                    mpressed = False
+                    pygame.display.flip()
+                    continue
+                else:
+                    game.state = "paused"
+                game.draw_paused()
+                pygame.display.flip()
+                continue
+
             # Client: send local input + receive state + render
             local_gi, pipeline_frame = _collect_local_input(
                 game, held, _gi_frame, station_click, overlay_click
             )
 
-            # Merge UI button clicks into local input (client cannot pause)
+            # Merge UI button clicks into local input
             btn_triggered = game.update_ui_buttons(mpos, _btn_pressed)
             if btn_triggered.get("confirm"): local_gi.confirm = True
             if btn_triggered.get("chop"):    local_gi.chop    = True
             if btn_triggered.get("stir"):    local_gi.stir    = True
+            if btn_triggered.get("pause") and game.state == "play":
+                client_paused = True
+                game.state = "paused"
+                game.audio.play("ui_pause")
+                game.audio.pause_bgm()
 
-            # Send input to server
-            client.send_input(local_gi.to_dict())
+            # Send input to server (skip when locally paused)
+            if not client_paused:
+                client.send_input(local_gi.to_dict())
 
             # Receive state from server
             try:

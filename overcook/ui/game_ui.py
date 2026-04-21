@@ -215,11 +215,12 @@ class IngredientOverlay:
 
 
 class SettingsOverlay:
-    PANEL_W, PANEL_H = 420, 290
+    PANEL_W, PANEL_H = 420, 320
 
     def __init__(self, audio):
         self.audio = audio
         self.active = False
+        self.amateur_mode = False  # show Current Orders panel when True
         self._dragging = None  # "bgm" or "sfx"
 
     def _rects(self):
@@ -228,13 +229,14 @@ class SettingsOverlay:
         px = cx - self.PANEL_W // 2
         py = cy - self.PANEL_H // 2
         track_w = self.PANEL_W - 120
-        bgm_track = pygame.Rect(px + 70, py + 100, track_w, 8)
-        sfx_track = pygame.Rect(px + 70, py + 180, track_w, 8)
+        bgm_track = pygame.Rect(px + 70, py + 90, track_w, 8)
+        sfx_track = pygame.Rect(px + 70, py + 165, track_w, 8)
+        amateur_rect = pygame.Rect(px + 20, py + 220, self.PANEL_W - 40, 40)
         close_rect = pygame.Rect(cx - 55, py + self.PANEL_H - 52, 110, 38)
-        return px, py, bgm_track, sfx_track, close_rect
+        return px, py, bgm_track, sfx_track, amateur_rect, close_rect
 
     def _panel_rect(self):
-        px, py, _, _, _ = self._rects()
+        px, py, *_ = self._rects()
         return pygame.Rect(px, py, self.PANEL_W, self.PANEL_H)
 
     def _vol_from_mouse(self, mpos, track):
@@ -243,12 +245,15 @@ class SettingsOverlay:
     def handle_mousedown(self, mpos):
         if not self.active:
             return False
-        px, py, bgm_track, sfx_track, close_rect = self._rects()
+        px, py, bgm_track, sfx_track, amateur_rect, close_rect = self._rects()
         if not self._panel_rect().collidepoint(mpos):
             self.active = False
             return True
         if close_rect.collidepoint(mpos):
             self.active = False
+            return True
+        if amateur_rect.collidepoint(mpos):
+            self.amateur_mode = not self.amateur_mode
             return True
         if bgm_track.inflate(0, 28).collidepoint(mpos):
             self._dragging = "bgm"
@@ -266,7 +271,7 @@ class SettingsOverlay:
     def handle_mousemove(self, mpos):
         if not self._dragging:
             return
-        _, _, bgm_track, sfx_track, _ = self._rects()
+        _, _, bgm_track, sfx_track, _, _ = self._rects()
         if self._dragging == "bgm":
             self.audio.set_bgm_volume(self._vol_from_mouse(mpos, bgm_track))
         else:
@@ -292,7 +297,7 @@ class SettingsOverlay:
         ov.fill((0, 0, 0, 160))
         surf.blit(ov, (0, 0))
 
-        px, py, bgm_track, sfx_track, close_rect = self._rects()
+        px, py, bgm_track, sfx_track, amateur_rect, close_rect = self._rects()
         rr(surf, (18, 22, 52), (px, py, self.PANEL_W, self.PANEL_H), 14)
         pygame.draw.rect(surf, (70, 60, 150), (px, py, self.PANEL_W, self.PANEL_H), 2, border_radius=14)
 
@@ -301,6 +306,22 @@ class SettingsOverlay:
 
         self._draw_slider(surf, bgm_track, self.audio.bgm_volume, "BGM")
         self._draw_slider(surf, sfx_track, self.audio.sfx_volume, "SFX")
+
+        # Amateur Mode toggle row
+        pygame.draw.line(surf, (50, 50, 100),
+                         (px + 20, amateur_rect.y - 8), (px + self.PANEL_W - 20, amateur_rect.y - 8), 1)
+        am_col = (30, 100, 50) if self.amateur_mode else (40, 40, 80)
+        rr(surf, am_col, amateur_rect, 8)
+        pygame.draw.rect(surf, (70, 60, 150), amateur_rect, 1, border_radius=8)
+        # Checkbox
+        cb = pygame.Rect(amateur_rect.x + 10, amateur_rect.centery - 10, 20, 20)
+        pygame.draw.rect(surf, (100, 100, 160), cb, border_radius=4)
+        if self.amateur_mode:
+            pygame.draw.rect(surf, (80, 220, 120), cb, border_radius=4)
+            txt(surf, "✓", 14, C["white"], cb.centerx, cb.centery)
+        label_col = (80, 220, 120) if self.amateur_mode else (180, 180, 210)
+        txt(surf, "Amateur Mode  (Show Current Orders)", 14, label_col,
+            amateur_rect.x + 40, amateur_rect.centery, anchor="midleft")
 
         mpos = pygame.mouse.get_pos()
         col = (60, 130, 80) if close_rect.collidepoint(mpos) else (40, 100, 60)

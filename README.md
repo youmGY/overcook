@@ -30,14 +30,17 @@ pip install -r requirements.txt
 ## Usage
 
 ```bash
-# Standard keyboard/mouse mode
-python main.py
+# Multiplayer mode (default - LAN lobby)
+python main.py --name "YourName"
 
-# Gesture control mode
-python main.py --gesture
+# Multiplayer mode with gesture control
+python main.py --name "YourName" --gesture
 
-# Multiplayer mode
-python main.py --multiplayer --name "YourName"
+# Solo mode with keyboard/mouse
+python main.py --solo
+
+# Solo mode with gesture control
+python main.py --solo --gesture
 ```
 
 ## Architecture
