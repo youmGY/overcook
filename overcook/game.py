@@ -310,7 +310,7 @@ class Game:
             from .recognition.interface import RecognitionPipeline
 
             fps = 60 if fast_motion else 30
-            max_hands = 1 if fast_motion else 2
+            max_hands = 1
             min_conf = 0.15 if fast_motion else 0.2
             self._pipeline = RecognitionPipeline(
                 camera_cfg=CameraConfig(device_index=device, width=640, height=480, fps=fps),
