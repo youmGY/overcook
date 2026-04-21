@@ -1429,7 +1429,7 @@ class Game:
             screen.blit(bs, (cx_ + card_w - bs.get_width() - 4, cy_ + card_h - bs.get_height() - 3))
 
     def _draw_hud(self, gw, gh):
-        HH = 44
+        HH = 84
         rr(screen, C["hud_bg"], (0, 0, gw, HH), 0)
         pygame.draw.line(screen, C["hud_brd"], (0, HH), (gw, HH), 1)
 
@@ -1443,8 +1443,8 @@ class Game:
 
         ox = gw - 8
         for o in reversed([o for o in self.orders if o.status == "active"]):
-            ox -= 84
-            o.draw(screen, ox, 2, w=82)
+            ox -= 116
+            o.draw(screen, ox, 2, w=114)
 
         hint = self._hint()
         if hint:
@@ -1966,7 +1966,9 @@ def _main_single(ui_mode: str, args):
         )
         game.update(dt, gi, mpos, _click_this_frame or mpressed)
 
-        if game.state == "title": game.draw_title()
+        if game.state == "title":
+            game.shutdown()
+            return  # return to lobby
         elif game.state == "over": game.draw_over()
         elif game.state == "paused": game.draw_paused()
         else: game.draw(pipeline_frame)
@@ -2135,7 +2137,7 @@ def _main_multiplayer(ui_mode: str, args):
                 lobby_ui.selected_room = -1
             elif action == "single":
                 _main_single(ui_mode, args)
-                return
+                mpressed = False  # clear lingering click when returning to lobby
             lobby_ui.draw_menu()
 
         elif lobby_state == "lobby_create":
