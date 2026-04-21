@@ -1,3 +1,4 @@
+"""Game balance and configuration constants for Overcook."""
 C = {
     "bg":           (11,  11,  28),
     "tile_a":       (30,  30,  62),
@@ -68,6 +69,19 @@ CHOP_ACTIONS = 4
 STIR_ACTIONS = 5
 ORDER_TIME = 60.0
 GAME_TIME  = 240.0
+
+# How many extra stirs beyond STIR_ACTIONS before the dish burns.
+OVER_STIR_THRESHOLD = STIR_ACTIONS + 5
+
+# Score penalties.
+WRONG_SUBMIT_PENALTY = 30  # submitting a dish with no matching order
+BURN_SUBMIT_PENALTY_FRAC = 0.5  # fraction of recipe pts deducted for burned dish
+
+# Player–station interaction range in pixels.
+INTERACTION_RANGE = 110
+
+# Popup display duration in frames (targeting 60 fps → ~0.5 s).
+POPUP_LIFETIME_FRAMES = 30
 
 # ── Multiplayer Network ───────────────────────────────────────────────
 NET_PORT = 5555

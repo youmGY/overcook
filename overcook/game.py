@@ -23,9 +23,13 @@ except Exception:
     cv2 = None
 
 from .engine import screen, clock, FPS, F, get_img
-from .constants import C, INGS, ING_KEYS, RECIPES, BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS
+from .constants import (
+    C, INGS, ING_KEYS, RECIPES,
+    BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS,
+    OVER_STIR_THRESHOLD, WRONG_SUBMIT_PENALTY, INTERACTION_RANGE,
+)
 from .utils import rr, txt, bar
-from .ui import Popup, Btn, RecipeOverlay, IngredientOverlay
+from .ui import Popup, Btn, RecipeOverlay, IngredientOverlay, SettingsOverlay
 from .entities import Station, Player, Order, _load_completed_food_img
 from .audio import AudioManager
 
@@ -573,7 +577,7 @@ class Game:
         best, bd = None, 9999
         for s in self.stations:
             d = s.dist(px, py)
-            if d < 110 and d < bd:
+            if d < INTERACTION_RANGE and d < bd:
                 best, bd = s, d
         return best
 
@@ -634,9 +638,9 @@ class Game:
         h = self.player.holding
         pid = self.player.player_id
         
-        # 아이템을 들고 있는 경우: chop station에 놓기
+        # Holding an item: place it on the chop board.
         if h:
-            # 멀티플레이어: 다른 플레이어가 사용 중이면 거부
+            # Multiplayer: reject if another player is using this station.
             if not self._can_use_station(st, pid):
                 locked_by = self._station_locks.get(self._get_station_idx(st))
                 if locked_by is not None and locked_by in self.players:
@@ -678,9 +682,9 @@ class Game:
             self._motion_gate_ready["chop"] = False
             return
 
-        # 아이템을 들고 있지 않고, 자른 아이템이 있는 경우: 픽업
+        # Not holding anything and a chopped item is ready: pick it up.
         if (not chop_action) and st.chop_item and st.chop_item.get("chopped"):
-            # 멀티플레이어: 락 체크 (자른 아이템은 누구나 픽업 가능하도록 락 체크 안 함)
+            # Multiplayer: skip lock check — anyone can pick up a finished item.
             self.player.holding = dict(st.chop_item)
             st.chop_item = None
             st.chop_prog = 0.0
@@ -694,7 +698,7 @@ class Game:
 
         # chop_action: 자르기
         if chop_action and st.chop_item and not st.chop_item.get("chopped"):
-            # 멀티플레이어: 다른 플레이어가 사용 중이면 거부
+            # Multiplayer: reject if another player is using this station.
             if not self._can_use_station(st, pid):
                 locked_by = self._station_locks.get(self._get_station_idx(st))
                 if locked_by is not None and locked_by in self.players:
@@ -744,7 +748,7 @@ class Game:
                 self._motion_gate_ready["stir"] = False
                 self.audio.play("ignite_whoosh")
             st.pot_stirs += 1
-            if st.pot_stirs >= STIR_ACTIONS + 5:
+            if st.pot_stirs >= OVER_STIR_THRESHOLD:
                 st.pot_cooking = False
                 st.pot_cooked = True
                 st.pot_burned = True
@@ -857,7 +861,7 @@ class Game:
                 self._pop(st.cx(), st.y - 30, f"+{pts} pts! 🎉", C["green"])
                 self.audio.play("serve_chaching")
         else:
-            penalty = 30
+            penalty = WRONG_SUBMIT_PENALTY
             self.score = max(0, self.score - penalty)
             self._pop(st.cx(), st.y + st.h + 14, f"No order! -{penalty} pts", C["red"])
             self._clear_submit_source(from_holding)
@@ -871,19 +875,22 @@ class Game:
             self.audio.play("trash_thud")
             return
 
+        # No item held — clear the nearest occupied chop board only.
+        px, py = self.player.center()
         chops = [s for s in self.stations if s.kind == "chop" and s.chop_item]
         if chops:
-            for chop in chops:
-                chop.chop_item = None
-                chop.chop_prog = 0.0
-                chop.chop_hits = 0
-                chop.chopping = False
-            self._pop(st.cx(), st.y + st.h + 14, "Chop boards cleared", C["pink"])
+            nearest = min(chops, key=lambda s: s.dist(px, py))
+            nearest.chop_item = None
+            nearest.chop_prog = 0.0
+            nearest.chop_hits = 0
+            nearest.chopping = False
+            self._unlock_station(nearest)
+            self._pop(st.cx(), st.y + st.h + 14, "Chop board cleared", C["pink"])
         else:
             self._pop(st.cx(), st.y + st.h + 14, "Nothing to trash", C["white"])
 
     def do_action(self):
-        # 현재 플레이어의 overlay 상태 확인
+        # Close active overlay for this player before doing a station action.
         pid = self.player.player_id
         if self._player_overlays.get(pid, False):
             self._player_overlays[pid] = False
@@ -911,6 +918,16 @@ class Game:
 
     def _pop(self, x, y, msg, col):
         self.popups.append(Popup(x, y, msg, col))
+
+    def _start_game_session(self):
+        """Reset state, spawn initial orders, and start the game BGM."""
+        self.reset()
+        self.state = "play"
+        self._spawn_order()
+        self._spawn_order()
+        self.audio.play("start_whistle")
+        self.audio.play_bgm("play_loop")
+        self._hurry_bgm_active = False
 
     def _spawn_order(self):
         active = sum(1 for o in self.orders if o.status == "active")
@@ -951,9 +968,9 @@ class Game:
                     return "Chop it first before adding to pot!"
                 return "Action: Add to pot"
             if not h and st.pot_items and not st.pot_cooking and not st.pot_cooked:
-                return f"Stir to start cooking! (max {STIR_ACTIONS + 2} stirs)"
+                return f"Stir to start cooking! (max {OVER_STIR_THRESHOLD - 1} stirs)"
             if not h and st.pot_cooked: return "Action: Pick cooked dish"
-            if not h and st.pot_cooking: return f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {STIR_ACTIONS + 3})"
+            if not h and st.pot_cooking: return f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {OVER_STIR_THRESHOLD})"
         if k == "submit":
             if h and h.get("cooked"):
                 if h.get("burned"): return "Action: Submit burned dish (penalty!)"
@@ -984,12 +1001,8 @@ class Game:
                 self.audio.play("ui_click")
                 return
             if self.btn_start.update(mpos, mpressed):
-                self.reset(); self.state = "play"
-                self._spawn_order(); self._spawn_order()
+                self._start_game_session()
                 self.audio.play("ui_click")
-                self.audio.play("start_whistle")
-                self.audio.play_bgm("play_loop")
-                self._hurry_bgm_active = False
             return
 
         if self.state == "paused":
@@ -1000,11 +1013,8 @@ class Game:
                 self.audio.play("ui_resume")
                 self.audio.unpause_bgm()
             if self.btn_pause_restart.update(mpos, mpressed):
-                self.reset(); self.state = "play"
-                self._spawn_order(); self._spawn_order()
+                self._start_game_session()
                 self.audio.play("ui_click")
-                self.audio.play_bgm("play_loop")
-                self._hurry_bgm_active = False
             if self.btn_pause_home.update(mpos, mpressed):
                 self.audio.stop_bgm()
                 self.audio.play_bgm("intro_bgm")
@@ -1094,7 +1104,7 @@ class Game:
 
             st = self._locked_station
             px, py = self.player.center()
-            in_lock_range = bool(st and st.dist(px, py) < 110)
+            in_lock_range = bool(st and st.dist(px, py) < INTERACTION_RANGE)
 
             # Allow thumbs_up/confirm interactions even while lock mode is active.
             if act_flags["confirm"] and st:
@@ -1217,8 +1227,8 @@ class Game:
         for o in self.orders:
             ev = o.update(dt)
             if ev == "failed":
-                self.score = max(0, self.score - 30)
-                self._pop(gw // 2, gh // 2 - 80, "Order failed! -30", C["red"])
+                self.score = max(0, self.score - WRONG_SUBMIT_PENALTY)
+                self._pop(gw // 2, gh // 2 - 80, f"Order failed! -{WRONG_SUBMIT_PENALTY}", C["red"])
                 self.audio.play("fail_wah")
 
         self.elapsed += dt
@@ -1647,8 +1657,8 @@ class Game:
         for o in self.orders:
             ev = o.update(dt)
             if ev == "failed":
-                self.score = max(0, self.score - 30)
-                self._pop(gw // 2, gh // 2 - 80, "Order failed! -30", C["red"])
+                self.score = max(0, self.score - WRONG_SUBMIT_PENALTY)
+                self._pop(gw // 2, gh // 2 - 80, f"Order failed! -{WRONG_SUBMIT_PENALTY}", C["red"])
                 self.audio.play("fail_wah")
 
         # Spawn orders
@@ -1765,8 +1775,10 @@ def main():
     parser.add_argument("-active", action="store_true", help="Show camera feed instead of action buttons")
     parser.add_argument("--gesture", action="store_true",
                         help="Enable gesture recognition input (camera + hand tracking)")
-    parser.add_argument("--flip", action="store_true", default=True,
-                        help="Mirror camera horizontally (default: True)")
+    parser.add_argument("--flip", dest="flip", action="store_true", default=True,
+                        help="Mirror camera horizontally (default: on)")
+    parser.add_argument("--no-flip", dest="flip", action="store_false",
+                        help="Disable camera mirroring")
     parser.add_argument("--fast-motion", action="store_true",
                         help="Fast-motion preset for rapid chop/stir capture")
     parser.add_argument("--clahe", dest="clahe", action="store_true", default=True,
@@ -1841,11 +1853,7 @@ def _main_solo(ui_mode: str, args):
                 if event.key in (pygame.K_z, pygame.K_SPACE):
                     if game.state == "play": _gi_frame["confirm"] = True
                     elif game.state in ("title", "over"):
-                        game.reset(); game.state = "play"
-                        game._spawn_order(); game._spawn_order()
-                        game.audio.play("start_whistle")
-                        game.audio.play_bgm("play_loop")
-                        game._hurry_bgm_active = False
+                        game._start_game_session()
                 if event.key == pygame.K_c and game.state == "play": _gi_frame["chop"] = True
                 if event.key == pygame.K_v and game.state == "play": _gi_frame["stir"] = True
                 if event.key == pygame.K_g and game.state == "play": _gi_frame["put_down"] = True
@@ -1856,11 +1864,7 @@ def _main_solo(ui_mode: str, args):
                         game.audio.play("page_flip")
                 if event.key == pygame.K_RETURN:
                     if game.state in ("title", "over"):
-                        game.reset(); game.state = "play"
-                        game._spawn_order(); game._spawn_order()
-                        game.audio.play("start_whistle")
-                        game.audio.play_bgm("play_loop")
-                        game._hurry_bgm_active = False
+                        game._start_game_session()
                 if event.key == pygame.K_ESCAPE:
                     if game.recipe_overlay.active:
                         game.recipe_overlay.active = False

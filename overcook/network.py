@@ -13,9 +13,12 @@ import select
 import socket
 import threading
 import time
+import logging
 from typing import Callable, Dict, List, Optional
 
 from .constants import NET_PORT, NET_DISCOVERY_PORT, NET_MAX_PLAYERS
+
+log = logging.getLogger(__name__)
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -75,7 +78,7 @@ class RoomAnnouncer:
             while not self._stop.is_set():
                 try:
                     sock.sendto(payload, ("255.255.255.255", self.discovery_port))
-                except Exception:
+                except OSError:
                     pass
                 time.sleep(1.0)
         finally:
@@ -217,13 +220,13 @@ class GameServer:
             for c in self._clients:
                 try:
                     c.conn.close()
-                except Exception:
+                except OSError:
                     pass
             self._clients.clear()
         if self._server_sock:
             try:
                 self._server_sock.close()
-            except Exception:
+            except OSError:
                 pass
 
     # ── accept loop ───────────────────────────────────────────────────
@@ -255,7 +258,7 @@ class GameServer:
             if not msg or msg.get("type") != "join":
                 try:
                     _send_json(conn, {"type": "join_ack", "ok": False, "reason": "invalid"})
-                except Exception:
+                except OSError:
                     pass
                 conn.close()
                 continue
@@ -337,7 +340,7 @@ class GameServer:
         if self.on_lobby_update:
             try:
                 self.on_lobby_update(info)
-            except Exception:
+            except OSError:
                 pass
 
     def set_host_ready(self, ready: bool = True):
@@ -379,23 +382,27 @@ class GameServer:
     # ── internal ──────────────────────────────────────────────────────
 
     def _broadcast(self, payload: dict):
+        dead = []
         with self._lock:
-            dead = []
             for c in self._clients:
                 if not c.alive:
                     dead.append(c)
                     continue
                 try:
                     _send_json(c.conn, payload)
-                except Exception:
+                except OSError as exc:
+                    log.warning("Client %s send failed: %s", c.player_id, exc)
                     c.alive = False
                     dead.append(c)
-            for c in dead:
-                try:
-                    c.conn.close()
-                except Exception:
-                    pass
-                self._clients.remove(c)
+        # Close dead connections outside the lock to avoid potential deadlock.
+        for c in dead:
+            try:
+                c.conn.close()
+            except OSError:
+                pass
+            with self._lock:
+                if c in self._clients:
+                    self._clients.remove(c)
 
 
 # ── game client ───────────────────────────────────────────────────────
@@ -441,7 +448,8 @@ class GameClient:
             self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
             self._recv_thread.start()
             return True
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            log.warning("GameClient.connect failed: %s", exc)
             self.close()
             return False
 
@@ -509,12 +517,12 @@ class GameClient:
         if self._reader:
             try:
                 self._reader.close()
-            except Exception:
+            except OSError:
                 pass
         if self._sock:
             try:
                 self._sock.close()
-            except Exception:
+            except OSError:
                 pass
         self._sock = None
         self._reader = None

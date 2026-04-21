@@ -75,7 +75,7 @@ class LobbyUI:
         gw, gh = screen.get_size()
         screen.fill(C["bg"])
         txt(screen, "Room Created", 32, C["gold"], gw // 2, 40)
-        txt(screen, f"IP: {host_ip}:{NET_PORT}", 14, (170, 170, 210), gw // 2, 70)
+        txt(screen, f"IP: {host_ip}", 14, (170, 170, 210), gw // 2, 70)
 
         self._draw_player_list(gw, gh)
 

@@ -2,6 +2,7 @@ import pygame
 import math
 import time
 import os
+import uuid
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -495,11 +496,8 @@ class Player:
 
 
 class Order:
-    _ctr = 0
-
     def __init__(self, recipe):
-        Order._ctr += 1
-        self.id = Order._ctr
+        self.id = uuid.uuid4().hex[:8]  # unique per-session, survives game resets
         self.recipe = recipe
         self.t = ORDER_TIME
         self.status = "active"

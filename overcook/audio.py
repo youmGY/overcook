@@ -1,13 +1,18 @@
 """Centralised audio manager for SFX and BGM."""
 from __future__ import annotations
 
+import logging
 import os
 import pygame
+
+log = logging.getLogger(__name__)
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ASSET_DIR = os.path.join(_ROOT, "assets")
 _SFX_DIR = os.path.join(_ASSET_DIR, "audio", "sfx")
 _BGM_DIR = os.path.join(_ASSET_DIR, "audio", "bgm")
+
+_MIXER_CHANNELS = 16  # simultaneous SFX voices
 
 # Volume defaults
 _SFX_VOL = 0.5
@@ -19,7 +24,7 @@ class AudioManager:
 
     def __init__(self, sfx_vol: float = _SFX_VOL, bgm_vol: float = _BGM_VOL):
         pygame.mixer.init()
-        pygame.mixer.set_num_channels(16)
+        pygame.mixer.set_num_channels(_MIXER_CHANNELS)
         self._sfx: dict[str, pygame.mixer.Sound] = {}
         self._sfx_vol = sfx_vol
         self._bgm_vol = bgm_vol
@@ -40,8 +45,8 @@ class AudioManager:
                 snd = pygame.mixer.Sound(path)
                 snd.set_volume(self._sfx_vol)
                 self._sfx[name] = snd
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning("Failed to load SFX %r: %s", path, exc)
 
     def play(self, name: str):
         """Play a loaded SFX by name (filename without extension)."""
@@ -63,8 +68,8 @@ class AudioManager:
             pygame.mixer.music.play(loops, fade_ms=fade_ms)
             self._current_bgm = name
             self._bgm_paused = False
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Failed to play BGM %r: %s", path, exc)
 
     def stop_bgm(self, fade_ms: int = 300):
         pygame.mixer.music.fadeout(fade_ms)
@@ -89,6 +94,16 @@ class AudioManager:
         self._sfx_vol = vol
         for snd in self._sfx.values():
             snd.set_volume(vol)
+
+    @property
+    def bgm_volume(self) -> float:
+        """Current BGM volume in [0.0, 1.0]."""
+        return self._bgm_vol
+
+    @property
+    def sfx_volume(self) -> float:
+        """Current SFX volume in [0.0, 1.0]."""
+        return self._sfx_vol
 
     def _resolve_bgm(self, name: str) -> str | None:
         for ext in (".ogg", ".wav", ".mp3"):

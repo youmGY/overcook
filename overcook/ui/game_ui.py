@@ -1,6 +1,6 @@
 import pygame
 from ..engine import F, screen, get_img
-from ..constants import C, INGS, ING_KEYS, RECIPES
+from ..constants import C, INGS, ING_KEYS, RECIPES, POPUP_LIFETIME_FRAMES
 from ..utils import rr, txt
 
 
@@ -8,7 +8,7 @@ class Popup:
     def __init__(self, x, y, message, color):
         self.x = x; self.y = float(y)
         self.msg = message; self.color = color
-        self.life = 30
+        self.life = POPUP_LIFETIME_FRAMES
 
     def update(self): self.life -= 1; self.y -= 0.65
 
@@ -299,8 +299,8 @@ class SettingsOverlay:
         txt(surf, "Settings", 18, C["gold"], px + self.PANEL_W // 2, py + 28)
         pygame.draw.line(surf, (50, 50, 100), (px + 20, py + 50), (px + self.PANEL_W - 20, py + 50), 1)
 
-        self._draw_slider(surf, bgm_track, self.audio._bgm_vol, "BGM")
-        self._draw_slider(surf, sfx_track, self.audio._sfx_vol, "SFX")
+        self._draw_slider(surf, bgm_track, self.audio.bgm_volume, "BGM")
+        self._draw_slider(surf, sfx_track, self.audio.sfx_volume, "SFX")
 
         mpos = pygame.mouse.get_pos()
         col = (60, 130, 80) if close_rect.collidepoint(mpos) else (40, 100, 60)
