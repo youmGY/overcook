@@ -179,7 +179,8 @@ def target_slot_for(label: str) -> Optional[int]:
 class GestureDebouncer:
     """Confirm a gesture only after it persists for N consecutive frames.
     
-    thumbs_up uses n=2 for faster response; finger_N uses the default n=3."""
+    thumbs_up uses threshold=2 (~66 ms at 30 fps) and clears instantly
+    when a different label appears.  finger_N uses the default n=3."""
 
     n: int = 3
     _pending: Optional[str] = None
@@ -190,10 +191,15 @@ class GestureDebouncer:
         if label == self._pending:
             self._streak += 1
         else:
+            # thumbs_up confirmed state clears immediately when a different
+            # raw label appears, so the cooldown resets without waiting for
+            # another gesture to accumulate N frames.
+            if self._confirmed == LABEL_THUMBS_UP and label != LABEL_THUMBS_UP:
+                self._confirmed = None
             self._pending = label
             self._streak = 1
 
-        # thumbs_up confirms faster (n=2) to feel more responsive
+        # thumbs_up confirms after 2 consecutive frames (≈66 ms at 30 fps)
         threshold = 2 if label == LABEL_THUMBS_UP else self.n
 
         confirmed_now = False
