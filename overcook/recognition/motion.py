@@ -185,6 +185,27 @@ def _push_speed(st: "_HandMotionState", speed: float) -> None:
     st.avg_speed = st._speed_sum / len(st._speed_buf)
 
 
+def _reset_motion_track_state(st: "_HandMotionState") -> None:
+    """Clear transient motion state while preserving hand scale adaptation."""
+    st.wy.clear()
+    st.wx.clear()
+    st._ema_y = None
+    st._ema_x = None
+    st._dir_y = 0
+    st._dir_x = 0
+    st._extreme_y = 0.0
+    st._extreme_x = 0.0
+    st._rev_chop = 0
+    st._rev_stir = 0
+    st._prev_rev_chop = 0
+    st._prev_rev_stir = 0
+    st._speed_buf.clear()
+    st._speed_sum = 0.0
+    st.avg_speed = 0.0
+    st.hold_counter = 0
+    st.held_gesture = None
+
+
 # ---------------------------------------------------------------------------
 #  Per-hand motion state
 # ---------------------------------------------------------------------------
@@ -338,6 +359,11 @@ class MotionDetector:
                     st.wx.append(pred_x)
                     st.last_wrist_pos = (pred_x, pred_y)
                 st.wrist_absent += 1
+                if st.wrist_absent >= cache_max:
+                    _reset_motion_track_state(st)
+                    st.last_wrist_pos = None
+                    st.last_wrist_vel = (0.0, 0.0)
+                    st.still_counter = 0
                 st.wrist_speed = 0.0
                 _push_speed(st, 0.0)
                 st.prev_wrist = None
@@ -345,16 +371,7 @@ class MotionDetector:
             if wrist_pos is not None and st.wrist_speed < still_speed_thresh:
                 st.still_counter += 1
                 if st.still_counter >= still_reset:
-                    st.wy.clear()
-                    st.wx.clear()
-                    st._ema_y = None
-                    st._ema_x = None
-                    st._dir_y = st._dir_x = 0
-                    st._rev_chop = st._rev_stir = 0
-                    st._prev_rev_chop = st._prev_rev_stir = 0
-                    st._speed_buf.clear()
-                    st._speed_sum = 0.0
-                    st.avg_speed = 0.0
+                    _reset_motion_track_state(st)
             else:
                 st.still_counter = 0
 

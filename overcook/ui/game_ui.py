@@ -8,7 +8,7 @@ class Popup:
     def __init__(self, x, y, message, color):
         self.x = x; self.y = float(y)
         self.msg = message; self.color = color
-        self.life = 80
+        self.life = 30
 
     def update(self): self.life -= 1; self.y -= 0.65
 

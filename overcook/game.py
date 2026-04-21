@@ -647,12 +647,12 @@ class Game:
             if chop_action:
                 st.chop_hits = 1
                 st.chopping = True
-                self._pop(st.cx(), st.y - 14, f"Chop {CHOP_ACTIONS}x ({st.chop_hits}/{CHOP_ACTIONS})", C["orange"])
+                self._pop(st.cx(), st.y + st.h + 14, f"Chop {CHOP_ACTIONS}x ({st.chop_hits}/{CHOP_ACTIONS})", C["orange"])
                 self.audio.play("chop_loop")
             else:
                 st.chop_hits = 0
                 st.chopping = False
-                self._pop(st.cx(), st.y - 14, "Placed on board", C["lime"])
+                self._pop(st.cx(), st.y + st.h + 14, "Placed on board", C["lime"])
                 self.audio.play("place")
             self._lock_mode = "chop"
             self._locked_station = st
@@ -686,7 +686,7 @@ class Game:
             st.chopping = True
             st.chop_hits = min(CHOP_ACTIONS, st.chop_hits + 1)
             st.chop_prog = st.chop_hits / float(CHOP_ACTIONS)
-            self._pop(st.cx(), st.y - 14, f"Chop {CHOP_ACTIONS}x ({st.chop_hits}/{CHOP_ACTIONS})", C["orange"])
+            self._pop(st.cx(), st.y + st.h + 14, f"Chop {CHOP_ACTIONS}x ({st.chop_hits}/{CHOP_ACTIONS})", C["orange"])
             self.audio.play("chop_loop")
 
     def _act_pot(self, st, stir_only=False):
@@ -708,10 +708,10 @@ class Game:
                 self._pop(self.player.x, self.player.y - 20, "Drop item first!", C["red"])
                 return
             if not st.pot_items:
-                self._pop(st.cx(), st.y - 14, "Add ingredients first", C["white"])
+                self._pop(st.cx(), st.y + st.h + 14, "Add ingredients first", C["white"])
                 return
             if st.pot_burned:
-                self._pop(st.cx(), st.y - 14, "Already burned! Clear it.", C["burn"])
+                self._pop(st.cx(), st.y + st.h + 14, "Already burned! Clear it.", C["burn"])
                 return
             if not st.pot_cooking and not st.pot_cooked:
                 # First stir: lock station for this player's stir session
@@ -730,12 +730,12 @@ class Game:
                 st.pot_cooked = True
                 st.pot_burned = True
                 st.pot_burn = BURN_TIME
-                self._pop(st.cx(), st.y - 14, "🔥 Over-stirred! BURNED!", C["burn"])
+                self._pop(st.cx(), st.y + st.h + 14, "🔥 Over-stirred! BURNED!", C["burn"])
                 log.warning("POT_BURNED: over-stirred")
                 self.audio.play("sizzle_burn")
                 return
             st.pot_prog = min(1.0, st.pot_stirs / float(STIR_ACTIONS))
-            self._pop(st.cx(), st.y - 14, f"Stir {STIR_ACTIONS}x ({st.pot_stirs}/{STIR_ACTIONS})", C["orange"])
+            self._pop(st.cx(), st.y + st.h + 14, f"Stir {STIR_ACTIONS}x ({st.pot_stirs}/{STIR_ACTIONS})", C["orange"])
             self.audio.play("sizzle_loop")
             return
 
@@ -753,7 +753,7 @@ class Game:
             else:
                 st.pot_items.append(dict(h))
                 self.player.holding = None
-                self._pop(st.cx(), st.y - 14, "Added ✓", C["gold"])
+                self._pop(st.cx(), st.y + st.h + 14, "Added ✓", C["gold"])
                 self.audio.play("splash")
         elif not h and st.pot_cooked and not burned:
             # 완성품 픽업: unlock station
@@ -799,18 +799,18 @@ class Game:
             self._pop(self.player.x, self.player.y - 20, "Picked burned dish!", C["burn"])
             self.audio.play("burn_puff")
         elif not h and st.pot_cooking:
-            self._pop(st.cx(), st.y - 14, f"Stir {STIR_ACTIONS}x ({st.pot_stirs}/{STIR_ACTIONS})", C["white"])
+            self._pop(st.cx(), st.y + st.h + 14, f"Stir {STIR_ACTIONS}x ({st.pot_stirs}/{STIR_ACTIONS})", C["white"])
 
     def _act_submit(self, st):
         dish, from_holding = self._find_submit_dish()
         if not dish:
-            self._pop(st.cx(), st.y - 14, "Nothing to submit!", C["red"])
+            self._pop(st.cx(), st.y + st.h + 14, "Nothing to submit!", C["red"])
             return
 
         contents = dish.get("contents", [])
         h_ids = sorted(c.get("id") for c in contents if isinstance(c, dict) and c.get("id"))
         if len(h_ids) != len(contents):
-            self._pop(st.cx(), st.y - 14, "Invalid dish: missing ingredient id", C["red"])
+            self._pop(st.cx(), st.y + st.h + 14, "Invalid dish: missing ingredient id", C["red"])
             self._clear_submit_source(from_holding)
             return
 
@@ -840,7 +840,7 @@ class Game:
         else:
             penalty = 30
             self.score = max(0, self.score - penalty)
-            self._pop(st.cx(), st.y - 14, f"No order! -{penalty} pts", C["red"])
+            self._pop(st.cx(), st.y + st.h + 14, f"No order! -{penalty} pts", C["red"])
             self._clear_submit_source(from_holding)
             self.audio.play("wrong_buzz")
 
@@ -848,7 +848,7 @@ class Game:
         h = self.player.holding
         if h:
             self.player.holding = None
-            self._pop(st.cx(), st.y - 14, "Trashed!", C["pink"])
+            self._pop(st.cx(), st.y + st.h + 14, "Trashed!", C["pink"])
             self.audio.play("trash_thud")
             return
 
@@ -859,9 +859,9 @@ class Game:
                 chop.chop_prog = 0.0
                 chop.chop_hits = 0
                 chop.chopping = False
-            self._pop(st.cx(), st.y - 14, "Chop boards cleared", C["pink"])
+            self._pop(st.cx(), st.y + st.h + 14, "Chop boards cleared", C["pink"])
         else:
-            self._pop(st.cx(), st.y - 14, "Nothing to trash", C["white"])
+            self._pop(st.cx(), st.y + st.h + 14, "Nothing to trash", C["white"])
 
     def do_action(self):
         # 현재 플레이어의 overlay 상태 확인
@@ -1102,6 +1102,9 @@ class Game:
                 self._lock_mode = None
                 self._locked_station = None
                 self._motion_gate_ready["chop"] = False
+                # Block thumbs_up for the next frame so a post-chop hand
+                # transition doesn't accidentally fire a confirm action.
+                self._thumbs_up_held = True
             elif self._lock_mode == "stir" and st and (
                 st.pot_cooked
                 or st.pot_burned
@@ -1110,6 +1113,8 @@ class Game:
                 self._lock_mode = None
                 self._locked_station = None
                 self._motion_gate_ready["stir"] = False
+                # Same post-stir guard.
+                self._thumbs_up_held = True
         else:
             move_to_slot = gi.move_to_slot
             clicked_station = self._station_at_point(gi.station_click)
