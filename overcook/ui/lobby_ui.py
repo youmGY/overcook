@@ -69,7 +69,7 @@ class LobbyUI:
                                "Connect", (50, 100, 50))
 
         # Settings button: top-right corner
-        self.btn_settings = Btn(gw - 58, 10, 48, 38, "⚙", (55, 55, 110))
+        self.btn_settings = Btn(gw - 90, 10, 80, 38, "Settings", (55, 55, 110))
 
     def rebuild(self):
         self._make_btns()
@@ -204,7 +204,7 @@ class LobbyUI:
             rr(screen, col_bg, (gw // 2 - 180, y, 360, 40), 8)
             pygame.draw.rect(screen, pc["body"], (gw // 2 - 180, y, 360, 40), 2, border_radius=8)
             txt(screen, name, 18, pc["body"], gw // 2 - 60, y + 20)
-            status = "✓ Ready" if ready else "Waiting..."
+            status = "Ready" if ready else "Waiting..."
             scol = C["lime"] if ready else (150, 150, 150)
             txt(screen, status, 14, scol, gw // 2 + 100, y + 20)
             y += 50

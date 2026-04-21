@@ -810,7 +810,7 @@ class Game:
             else:
                 st.pot_items.append(dict(h))
                 self.player.holding = None
-                self._pop(st.cx(), st.y + st.h + 14, "Added ✓", C["gold"])
+                self._pop(st.cx(), st.y + st.h + 14, "Added", C["gold"])
                 self.audio.play("splash")
         elif not h and st.pot_cooked and not burned:
             # 완성품 픽업: unlock station
@@ -1259,13 +1259,13 @@ class Game:
         # Emit audio/popup for station events collected at the top of this frame
         for s, ev in station_events:
             if ev == "chop_done":
-                self._pop(s.cx(), s.y - 14, "✓ Chopped!", C["lime"])
+                self._pop(s.cx(), s.y - 14, "Chopped!", C["lime"])
                 self.audio.play("chop_done")
             elif ev == "cook_done":
-                self._pop(s.cx(), s.y - 14, "✓ Cooked! Pick it up!", C["green"])
+                self._pop(s.cx(), s.y - 14, "Cooked! Pick it up!", C["green"])
                 self.audio.play("cook_done")
             elif ev == "burned":
-                self._pop(s.cx(), s.y - 14, "🔥 BURNED!", C["burn"])
+                self._pop(s.cx(), s.y - 14, "BURNED!", C["burn"])
                 self.audio.play("burn_alarm")
 
         for o in self.orders:
@@ -1830,14 +1830,14 @@ class Game:
         }
 
         # H6: sync popups from server so client sees feedback messages
+        # Replace the entire list each frame so life values stay in sync and
+        # popups that expired on the server are removed on the client too.
         if "popups" in state:
-            existing = {(p.msg, int(p.x), int(p.y)) for p in self.popups}
+            self.popups = []
             for d in state["popups"]:
-                key = (d["msg"], int(d["x"]), int(d["y"]))
-                if key not in existing:
-                    p = Popup(d["x"], d["y"], d["msg"], tuple(d["color"]))
-                    p.life = d["life"]
-                    self.popups.append(p)
+                p = Popup(d["x"], d["y"], d["msg"], tuple(d["color"]))
+                p.life = d["life"]
+                self.popups.append(p)
 
         # Keep local overlay object in sync with this client's overlay/highlight state
         local_active = self._player_overlays.get(self.local_player_id, False)
