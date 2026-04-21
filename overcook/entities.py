@@ -182,7 +182,7 @@ class Station:
         else:  # plate
             base, top = C["plate_base"], C["plate_top"]
 
-        rr(surf, base, (self.x + 8, self.y + self.h, self.w - 16, gy - self.y - self.h), 2)
+        # rr(surf, base, (self.x + 8, self.y + self.h, self.w - 16, gy - self.y - self.h), 2)
         rr(surf, top, (self.x, self.y, self.w, self.h), 6)
         surf.fill((255, 255, 255, 15), (self.x + 5, self.y + 2, self.w - 10, 3))
 
@@ -511,7 +511,7 @@ class Order:
         return None
 
     def draw(self, surf, x, y, w=80):
-        h = 80
+        h = 56
         urg  = self.t < 15 and self.status == "active"
         fail = self.status == "failed"
         brd  = C["red"] if fail else C["ord_urg"] if urg else C["ord_brd"]
@@ -521,17 +521,17 @@ class Order:
         bg.fill((*C["ord_bg"], a)); surf.blit(bg, (x, y))
         pygame.draw.rect(surf, brd, (x, y, w, h), 1, border_radius=7)
 
-        nm = F[14].render(self.recipe["name"], True,
+        nm = F[12].render(self.recipe["name"], True,
                           C["blue"] if not fail else (130, 130, 130))
-        surf.blit(nm, (x + w // 2 - nm.get_width() // 2, y + 6))
+        surf.blit(nm, (x + w // 2 - nm.get_width() // 2, y + 5))
 
         needs = self.recipe["needs"]
         n_needs = len(needs)
-        img_sz = min(26, max(14, (w - 12) // max(n_needs, 1) - 3))
-        gap_i = 4
+        img_sz = min(18, max(10, (w - 12) // max(n_needs, 1) - 3))
+        gap_i = 3
         total_w = n_needs * img_sz + (n_needs - 1) * gap_i
         start_x = x + w // 2 - total_w // 2
-        iy = y + 26
+        iy = y + 20
         for idx_i, need in enumerate(needs):
             ix = start_x + idx_i * (img_sz + gap_i)
             base = need.replace("_c", "")
@@ -545,7 +545,7 @@ class Order:
 
         pct = self.t / ORDER_TIME if self.status == "active" else 0
         col_f = C["green"] if pct > 0.4 else C["orange"] if pct > 0.15 else C["red"]
-        bar(surf, x + 4, y + h - 12, w - 8, 7, pct, (25, 38, 48), col_f, 2)
+        bar(surf, x + 4, y + h - 11, w - 8, 6, pct, (25, 38, 48), col_f, 2)
 
     def to_dict(self) -> dict:
         """Serialize order state for network transmission."""
