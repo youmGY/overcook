@@ -183,13 +183,19 @@ class Station:
             base, top = C["plate_base"], C["plate_top"]
 
         # rr(surf, base, (self.x + 8, self.y + self.h, self.w - 16, gy - self.y - self.h), 2)
+        box_x, box_y, box_w, box_h = self.x, self.y, self.w, self.h
         if show_box:
-            rr(surf, top, (self.x, self.y, self.w, self.h), 6)
-            surf.fill((255, 255, 255, 15), (self.x + 5, self.y + 2, self.w - 10, 3))
+            # In amateur mode, lower and slim this box so it does not overlap station icons.
+            box_y = self.y + 10
+            box_h = max(36, self.h - 14)
+            rr(surf, top, (box_x, box_y, box_w, box_h), 6)
+            surf.fill((255, 255, 255, 15), (box_x + 5, box_y + 2, box_w - 10, 3))
 
         if show_label:
             s = F[14].render(self._station_label(), True, (220, 220, 220))
-            surf.blit(s, (self.cx() - s.get_width() // 2, self.cy() - s.get_height() // 2))
+            label_cx = box_x + box_w // 2 if show_box else self.cx()
+            label_cy = box_y + box_h // 2 if show_box else self.cy()
+            surf.blit(s, (label_cx - s.get_width() // 2, label_cy - s.get_height() // 2))
 
         ix, iy = self.cx(), self.y - 8
         self._draw_icon(surf, ix, iy)
@@ -304,12 +310,12 @@ class Station:
                     pygame.draw.circle(surf, col, (int(ox), iy), 13)
         if self.pot_cooking or self.pot_cooked:
             col_f = C["green"] if self.pot_cooked else C["orange"]
-            bar(surf, self.x + 14, self.y - 100, self.w - 28, 5,
+            bar(surf, self.x + 14, self.y - 90, self.w - 28, 5,
                 self.pot_prog, (40, 40, 40), col_f, 2)
         if self.pot_cooked and self.pot_items:
             burn_pct = min(1.0, self.pot_burn / BURN_TIME)
             col_b = C["burn"] if burn_pct < 0.7 else C["red"]
-            bar(surf, self.x + 14, self.y - 110, self.w - 28, 4,
+            bar(surf, self.x + 14, self.y - 100, self.w - 28, 4,
                 burn_pct, (30, 20, 20), col_b, 2)
         if self.pot_cooked and not (self.pot_burn >= BURN_TIME):
             pygame.draw.circle(surf, C["green"], (ix + 12, iy - 10), 5)
