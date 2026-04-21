@@ -283,7 +283,7 @@ class Station:
         if chopped:
             pygame.draw.line(surf, C["lime"], (ix - 6, iy + 4), (ix + 10, iy - 6), 2)
         else:
-            bar(surf, self.x + 14, self.y + self.h + 6, self.w - 28, 5,
+            bar(surf, self.x + 14, self.y - 50, self.w - 28, 5,
                 self.chop_prog, (50, 50, 50), C["orange"], 2)
 
     def _draw_pot_items(self, surf, ix, iy):
@@ -304,12 +304,12 @@ class Station:
                     pygame.draw.circle(surf, col, (int(ox), iy), 13)
         if self.pot_cooking or self.pot_cooked:
             col_f = C["green"] if self.pot_cooked else C["orange"]
-            bar(surf, self.x + 14, self.y + self.h + 6, self.w - 28, 5,
+            bar(surf, self.x + 14, self.y - 100, self.w - 28, 5,
                 self.pot_prog, (40, 40, 40), col_f, 2)
         if self.pot_cooked and self.pot_items:
             burn_pct = min(1.0, self.pot_burn / BURN_TIME)
             col_b = C["burn"] if burn_pct < 0.7 else C["red"]
-            bar(surf, self.x + 14, self.y + self.h + 14, self.w - 28, 4,
+            bar(surf, self.x + 14, self.y - 110, self.w - 28, 4,
                 burn_pct, (30, 20, 20), col_b, 2)
         if self.pot_cooked and not (self.pot_burn >= BURN_TIME):
             pygame.draw.circle(surf, C["green"], (ix + 12, iy - 10), 5)
