@@ -183,6 +183,7 @@ class Game:
         local_player_id: int = 0,
         player_name: str = "Player 1",
         audio: "AudioManager | None" = None,
+        settings_state=None,
     ):
         self.ui_mode = ui_mode
         self.use_camera_ui = ui_mode != "test"
@@ -232,7 +233,7 @@ class Game:
         self._hurry_bgm_active = False
         self.overlay = IngredientOverlay()
         self.recipe_overlay = RecipeOverlay()
-        self.settings_overlay = SettingsOverlay(self.audio)
+        self.settings_overlay = SettingsOverlay(self.audio, settings_state)
         self._make_btns()
         # Horizontal inset from both screen edges for the station row.
         # Increase to pull left/right stations closer to the center.
@@ -310,7 +311,7 @@ class Game:
             from .recognition.interface import RecognitionPipeline
 
             fps = 60 if fast_motion else 30
-            max_hands = 1 if fast_motion else 2
+            max_hands = 1
             min_conf = 0.15 if fast_motion else 0.2
             self._pipeline = RecognitionPipeline(
                 camera_cfg=CameraConfig(device_index=device, width=640, height=480, fps=fps),
@@ -1484,7 +1485,7 @@ class Game:
             ox -= 142
             o.draw(screen, ox, 2, w=140)
 
-        hint = self._hint()
+        hint = self._hint() if self.settings_overlay.amateur_mode else None
         if hint:
             hs = F[12].render(hint, True, (200, 200, 200))
             hw = hs.get_width() + 16; hh2 = hs.get_height() + 8
@@ -2205,6 +2206,7 @@ def _main_multiplayer(ui_mode: str, args):
                         local_player_id=0,
                         player_name=args.name,
                         audio=lobby_ui.audio,
+                        settings_state=lobby_ui.settings_state,
                     )
                     game.set_mp_player_names(player_names)
                     game.reset()
@@ -2288,6 +2290,7 @@ def _main_multiplayer(ui_mode: str, args):
                         local_player_id=client.player_id,
                         player_name=args.name,
                         audio=lobby_ui.audio,
+                        settings_state=lobby_ui.settings_state,
                     )
                     game.set_mp_player_names(player_names)
                     game.reset()

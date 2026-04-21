@@ -14,7 +14,7 @@ from ..engine import screen
 from ..constants import C, NET_PORT, PLAYER_COLORS
 from ..utils import rr, txt
 from ..audio import AudioManager
-from .game_ui import Btn, SettingsOverlay
+from .game_ui import Btn, SettingsOverlay, SettingsState
 
 
 class LobbyUI:
@@ -34,7 +34,8 @@ class LobbyUI:
         # Audio & settings
         self.audio = AudioManager()
         self.audio.play_bgm("intro_bgm")
-        self.settings_overlay = SettingsOverlay(self.audio)
+        self.settings_state = SettingsState()
+        self.settings_overlay = SettingsOverlay(self.audio, self.settings_state)
 
         # Load background image
         self.bg_img = None

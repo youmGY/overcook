@@ -214,14 +214,27 @@ class IngredientOverlay:
         return None
 
 
+class SettingsState:
+    def __init__(self):
+        self.amateur_mode = False
+
+
 class SettingsOverlay:
     PANEL_W, PANEL_H = 420, 320
 
-    def __init__(self, audio):
+    def __init__(self, audio, state=None):
         self.audio = audio
+        self.state = state if state is not None else SettingsState()
         self.active = False
-        self.amateur_mode = False  # show Current Orders panel when True
         self._dragging = None  # "bgm" or "sfx"
+
+    @property
+    def amateur_mode(self):
+        return self.state.amateur_mode
+
+    @amateur_mode.setter
+    def amateur_mode(self, v):
+        self.state.amateur_mode = bool(v)
 
     def _rects(self):
         gw, gh = screen.get_size()
