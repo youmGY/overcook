@@ -1585,9 +1585,10 @@ class Game:
 
         if self._lock_mode:
             st = self._locked_station
-            if not gi.chop:
+            # Fix M3: mirror update() — gate per current lock mode only
+            if self._lock_mode == "chop" and not gi.chop:
                 self._motion_gate_ready["chop"] = True
-            elif not gi.stir:
+            elif self._lock_mode == "stir" and not gi.stir:
                 self._motion_gate_ready["stir"] = True
 
             if self._lock_mode == "chop" and gi.chop and st:
@@ -1601,14 +1602,28 @@ class Game:
                 else:
                     self._act_pot(st, stir_only=True)
 
+            # Fix H5: confirm while locked picks up the finished item
+            if (gi.confirm or gi.action) and st:
+                if self._lock_mode == "chop":
+                    self._act_chop(st, chop_action=False)
+                elif self._lock_mode == "stir":
+                    self._act_pot(st, stir_only=False)
+
             if self._lock_mode == "chop" and (not st or not st.chop_item or st.chop_item.get("chopped")):
                 self._lock_mode = None
                 self._locked_station = None
                 self._motion_gate_ready["chop"] = False
-            elif self._lock_mode == "stir" and st and (st.pot_cooked or st.pot_burned):
+            elif self._lock_mode == "stir" and st and (
+                st.pot_cooked
+                or st.pot_burned
+                or (not st.pot_cooking and not st.pot_items)  # Fix M4
+            ):
                 self._lock_mode = None
                 self._locked_station = None
                 self._motion_gate_ready["stir"] = False
+
+            # Fix H4: always run player physics so gravity/grounding work while locked
+            self.player.update(0, dt, gw, self._gy())
         else:
             move_to_slot = gi.move_to_slot
             clicked_station = self._station_at_point(gi.station_click)
@@ -1643,6 +1658,9 @@ class Game:
 
     def server_tick(self, dt: float, all_inputs: dict):
         """Server: process one game tick with inputs from all players."""
+        if self.state != "play":  # H2: freeze when paused or over
+            return
+
         # Process each player's input
         for pid, inp_dict in all_inputs.items():
             gi = GameInput.from_dict(inp_dict)
@@ -1681,6 +1699,18 @@ class Game:
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
             self.state = "over"
+            # M2: play win/lose fanfare and result BGM
+            if self.score >= 100:
+                self.audio.play("fanfare_win")
+                self.audio.play_bgm("result_win", loops=0)
+            else:
+                self.audio.play("fail_wah")
+                self.audio.play_bgm("result_lose", loops=0)
+        elif self.timer < 20 and not self._hurry_bgm_active:
+            # M2: hurry BGM when under 20 s
+            self._hurry_bgm_active = True
+            self.audio.play("tick_tock")
+            self.audio.play_bgm("play_hurry_loop")
 
         # Update popups
         for p in self.popups:
@@ -1702,6 +1732,12 @@ class Game:
             "player_overlays":   {str(pid): v for pid, v in self._player_overlays.items()},
             "player_highlights": {str(pid): v for pid, v in self._player_highlights.items()},
             "station_locks":     {str(k): v for k, v in self._station_locks.items()},
+            # H6: sync popup feedback to all clients
+            "popups": [
+                {"x": p.x, "y": p.y, "msg": p.msg,
+                 "color": list(p.color), "life": p.life}
+                for p in self.popups
+            ],
         }
 
     def apply_state(self, state: dict):
@@ -1765,6 +1801,16 @@ class Game:
         self._station_locks = {
             int(k): v for k, v in state.get("station_locks", {}).items()
         }
+
+        # H6: sync popups from server so client sees feedback messages
+        if "popups" in state:
+            existing = {(p.msg, int(p.x), int(p.y)) for p in self.popups}
+            for d in state["popups"]:
+                key = (d["msg"], int(d["x"]), int(d["y"]))
+                if key not in existing:
+                    p = Popup(d["x"], d["y"], d["msg"], tuple(d["color"]))
+                    p.life = d["life"]
+                    self.popups.append(p)
 
         # Keep local overlay object in sync with this client's overlay/highlight state
         local_active = self._player_overlays.get(self.local_player_id, False)
@@ -2020,18 +2066,28 @@ def _main_multiplayer(ui_mode: str, args):
                         pygame.quit()
                         return
                 # Game keys (only processed during playing states)
-                if lobby_state.startswith("playing") and game and game.state == "play":
-                    if event.key == pygame.K_ESCAPE:
-                        if game and game._player_overlays.get(getattr(game, "local_player_id", 0), False):
-                            _gi_frame["overlay_cancel"] = True
-                    if event.key in _SLOT_KEYS:
-                        _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
-                    if event.key in (pygame.K_z, pygame.K_SPACE):
-                        _gi_frame["confirm"] = True
-                    if event.key == pygame.K_c:
-                        _gi_frame["chop"] = True
-                    if event.key == pygame.K_v:
-                        _gi_frame["stir"] = True
+                if lobby_state.startswith("playing") and game:
+                    if game.state == "play":
+                        if event.key == pygame.K_ESCAPE:
+                            if game._player_overlays.get(getattr(game, "local_player_id", 0), False):
+                                _gi_frame["overlay_cancel"] = True
+                            elif lobby_state == "playing_host":  # M7: only host can pause
+                                game.state = "paused"
+                                game.audio.play("ui_pause")
+                                game.audio.pause_bgm()
+                        if event.key in _SLOT_KEYS:
+                            _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
+                        if event.key in (pygame.K_z, pygame.K_SPACE):
+                            _gi_frame["confirm"] = True
+                        if event.key == pygame.K_c:
+                            _gi_frame["chop"] = True
+                        if event.key == pygame.K_v:
+                            _gi_frame["stir"] = True
+                    elif game.state == "paused" and event.key == pygame.K_ESCAPE:
+                        if lobby_state == "playing_host":  # M7: resume
+                            game.state = "play"
+                            game.audio.play("ui_resume")
+                            game.audio.unpause_bgm()
             if event.type == pygame.KEYUP:
                 if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = False
                 if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
@@ -2039,13 +2095,18 @@ def _main_multiplayer(ui_mode: str, args):
                 mpressed = True
                 _click_this_frame = True
                 click_pos = pygame.mouse.get_pos()
-                # Assign click to overlay or station based on local overlay state
-                if game and game._player_overlays.get(getattr(game, 'local_player_id', 0), False):
+                # M1: route click through settings overlay first
+                if game and game.settings_overlay.handle_mousedown(click_pos):
+                    pass  # consumed by settings overlay
+                elif game and game._player_overlays.get(getattr(game, 'local_player_id', 0), False):
                     overlay_click = click_pos
                 elif lobby_state.startswith("playing"):
                     station_click = click_pos
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 mpressed = False
+                if game: game.settings_overlay.handle_mouseup(event.pos)
+            if event.type == pygame.MOUSEMOTION:
+                if game: game.settings_overlay.handle_mousemove(event.pos)
 
         mpos = pygame.mouse.get_pos()
 
@@ -2101,6 +2162,7 @@ def _main_multiplayer(ui_mode: str, args):
                     game.state = "play"
                     game._spawn_order()
                     game._spawn_order()
+                    game.audio.play("start_whistle")  # L3
                     game.audio.play_bgm("play_loop")
                     server.start_game()
                     lobby_state = "playing_host"
@@ -2179,6 +2241,7 @@ def _main_multiplayer(ui_mode: str, args):
                     game.set_mp_player_names(player_names)
                     game.reset()
                     game.state = "play"
+                    game.audio.play("start_whistle")  # L3
                     game.audio.play_bgm("play_loop")
                     lobby_state = "playing_client"
             except Exception:
@@ -2187,13 +2250,26 @@ def _main_multiplayer(ui_mode: str, args):
             lobby_ui.draw_wait()
 
         elif lobby_state == "playing_host":
+            mpos = pygame.mouse.get_pos()
+
+            # H1+H3: handle paused/over states before game logic
+            if game.state != "play":
+                game.update(dt, GameInput(), mpos, _btn_pressed)
+                if game.state == "over":
+                    server.broadcast_game_over(game.score)
+                    server.stop()
+                    game.draw_over()
+                elif game.state == "paused":
+                    game.draw_paused()
+                pygame.display.flip()
+                continue
+
             # Host: collect inputs + server_tick + broadcast
             host_gi, pipeline_frame = _collect_local_input(
                 game, held, _gi_frame, station_click, overlay_click
             )
 
             # Merge UI button clicks into host input
-            mpos = pygame.mouse.get_pos()
             btn_triggered = game.update_ui_buttons(mpos, _btn_pressed)
             if btn_triggered.get("confirm"): host_gi.confirm = True
             if btn_triggered.get("chop"):    host_gi.chop    = True
@@ -2226,32 +2302,38 @@ def _main_multiplayer(ui_mode: str, args):
             if ticked:
                 server.broadcast_state(game.serialize_state())
 
-            # Local rendering
-            game.draw(pipeline_frame)
-            pygame.display.flip()
-
+            # H1: route to correct draw method
             if game.state == "over":
                 server.broadcast_game_over(game.score)
                 server.stop()
+                game.draw_over()
+                pygame.display.flip()
+                game.shutdown()
+                return
+            game.draw(pipeline_frame)
+            pygame.display.flip()
+
+        elif lobby_state == "playing_client":
+            mpos = pygame.mouse.get_pos()
+
+            # H1+H3: handle paused/over states without sending input to server
+            if game.state == "over":
+                game.draw_over()
+                pygame.display.flip()
+                client.close()
                 game.shutdown()
                 return
 
-        elif lobby_state == "playing_client":
             # Client: send local input + receive state + render
             local_gi, pipeline_frame = _collect_local_input(
                 game, held, _gi_frame, station_click, overlay_click
             )
 
-            # Merge UI button clicks into local input
-            mpos = pygame.mouse.get_pos()
+            # Merge UI button clicks into local input (client cannot pause)
             btn_triggered = game.update_ui_buttons(mpos, _btn_pressed)
             if btn_triggered.get("confirm"): local_gi.confirm = True
             if btn_triggered.get("chop"):    local_gi.chop    = True
             if btn_triggered.get("stir"):    local_gi.stir    = True
-            if btn_triggered.get("pause"):
-                game.state = "paused"
-                game.audio.play("ui_pause")
-                game.audio.pause_bgm()
 
             # Send input to server
             client.send_input(local_gi.to_dict())
@@ -2272,14 +2354,12 @@ def _main_multiplayer(ui_mode: str, args):
             except Exception:
                 pass
 
-            # Local rendering
-            game.draw(pipeline_frame)
+            # H1: route to correct draw method
+            if game.state == "paused":
+                game.draw_paused()
+            else:
+                game.draw(pipeline_frame)
             pygame.display.flip()
-
-            if game.state == "over":
-                client.close()
-                game.shutdown()
-                return
 
         # For lobby states that don't call flip internally
         if not lobby_state.startswith("playing"):
