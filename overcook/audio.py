@@ -10,7 +10,7 @@ _SFX_DIR = os.path.join(_ASSET_DIR, "audio", "sfx")
 _BGM_DIR = os.path.join(_ASSET_DIR, "audio", "bgm")
 
 # Volume defaults
-_SFX_VOL = 0.8
+_SFX_VOL = 0.5
 _BGM_VOL = 0.4
 
 
@@ -84,6 +84,11 @@ class AudioManager:
     def set_bgm_volume(self, vol: float):
         self._bgm_vol = vol
         pygame.mixer.music.set_volume(vol)
+
+    def set_sfx_volume(self, vol: float):
+        self._sfx_vol = vol
+        for snd in self._sfx.values():
+            snd.set_volume(vol)
 
     def _resolve_bgm(self, name: str) -> str | None:
         for ext in (".ogg", ".wav", ".mp3"):

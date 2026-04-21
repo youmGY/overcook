@@ -205,7 +205,6 @@ class Station:
         icon_img = _load_station_icon(self.kind, 60)
         if icon_img:
             img_w, img_h = icon_img.get_size()
-            # Center horizontally, align bottom vertically
             x = ix - img_w // 2
             y = iy - img_h + 10
             surf.blit(icon_img, (int(x), int(y)))

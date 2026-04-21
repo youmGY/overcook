@@ -45,16 +45,16 @@ INGS = {
 ING_KEYS = list(INGS.keys())
 
 RECIPES = [
-    {"name": "Tomato Soup", "pts": 100, "needs": ["tomato_c","onion_c"], "cook": True,
-     "steps": ["CHOP Tomato & Onion", "Add to Stove & Cook"]},
+    {"name": "Tomato Soup", "pts": 100, "needs": ["tomato_c"], "cook": True,
+     "steps": ["CHOP Tomato", "Add to Stove & Stir"]},
     {"name": "Fried Rice", "pts": 110, "needs": ["rice","tomato_c"], "cook": True,
-     "steps": ["Get Rice, CHOP Tomato", "Add both to Stove & Cook"]},
+     "steps": ["Get Rice, CHOP Tomato", "Add all to Stove & Stir"]},
     {"name": "Mushroom Stir-fry", "pts": 90, "needs": ["mushroom_c","onion_c"], "cook": True,
-     "steps": ["CHOP Mushroom & Onion", "Add to Stove & Quick Cook"]},
+     "steps": ["CHOP Mushroom & Onion", "Add all to Stove & Stir"]},
     {"name": "Veg Curry", "pts": 150, "needs": ["carrot_c","onion_c","rice"], "cook": True,
-     "steps": ["CHOP Carrot & Onion","Get Rice", "Add all to Stove & Simmer"]},
+     "steps": ["CHOP Carrot & Onion","Get Rice", "Add all to Stove & Stir"]},
     {"name": "Carrot Soup", "pts": 80, "needs": ["carrot_c"], "cook": True,
-     "steps": ["CHOP Carrot", "Add to Stove & Cook"]},
+     "steps": ["CHOP Carrot", "Add to Stove & Stir"]},
     # {"name": "Rice Bowl", "pts": 95, "needs": ["rice","mushroom_c"], "cook": True,
     # "steps": ["Get Rice, CHOP Mushroom", "Add both to Stove & Cook"]},
     # {"name": "Veg Salad", "pts": 70, "needs": ["tomato_c","mushroom_c"], "cook": False,
@@ -66,7 +66,7 @@ COOK_TIME  = 5.0
 CHOP_TIME  = 3.0
 CHOP_ACTIONS = 4
 STIR_ACTIONS = 5
-ORDER_TIME = 55.0
+ORDER_TIME = 60.0
 GAME_TIME  = 240.0
 
 # ── Multiplayer Network ───────────────────────────────────────────────
