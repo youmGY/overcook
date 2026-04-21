@@ -217,7 +217,7 @@ class Station:
             if self.kind == "chop" and self.chop_item:
                 self._draw_chop_item(surf, ix, iy - 8)
             elif self.kind == "pot":
-                self._draw_pot_items(surf, ix, iy - 15)
+                self._draw_pot_items(surf, ix, iy - 60)
             return
 
         # Fallback to original drawing code if image not found
