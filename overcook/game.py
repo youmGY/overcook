@@ -2323,6 +2323,8 @@ def _main_multiplayer(ui_mode: str, args):
                     pygame.display.flip()
                     continue
                 elif game.state == "paused":
+                    # Keep guests in sync while host is paused.
+                    server.broadcast_state(game.serialize_state())
                     game.draw_paused()
                 pygame.display.flip()
                 continue
@@ -2388,6 +2390,22 @@ def _main_multiplayer(ui_mode: str, args):
 
         elif lobby_state == "playing_client":
             mpos = pygame.mouse.get_pos()
+
+            # If host/server is gone, exit cleanly back to lobby instead of hanging.
+            if not client or not client.connected:
+                if client:
+                    client.close()
+                if game:
+                    game.shutdown()
+                game = None
+                client = None
+                client_paused = False
+                lobby_state = "lobby_menu"
+                lobby_ui.status_text = "Disconnected from host"
+                lobby_ui.audio.play_bgm("intro_bgm")
+                mpressed = False
+                pygame.display.flip()
+                continue
 
             # H1+H3: handle paused/over states without sending input to server
             if game.state == "over":

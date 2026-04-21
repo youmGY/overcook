@@ -345,7 +345,15 @@ class GameServer:
                 try:
                     slot.input_queue.put_nowait(msg.get("input", {}))
                 except queue.Full:
-                    pass
+                    # Keep controls responsive: drop oldest queued input and keep latest.
+                    try:
+                        slot.input_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        slot.input_queue.put_nowait(msg.get("input", {}))
+                    except queue.Full:
+                        pass
 
         with self._lock:
             slot.alive = False
@@ -394,11 +402,15 @@ class GameServer:
             for c in self._clients:
                 if not c.alive:
                     continue
-                try:
-                    inp = c.input_queue.get_nowait()
-                    inputs[c.player_id] = inp
-                except queue.Empty:
-                    pass
+                # Consume all queued inputs and keep only the latest snapshot.
+                latest = None
+                while True:
+                    try:
+                        latest = c.input_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                if latest is not None:
+                    inputs[c.player_id] = latest
         return inputs
 
     def broadcast_state(self, state: dict):
