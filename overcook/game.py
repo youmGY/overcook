@@ -204,6 +204,9 @@ class Game:
         # Thumbs-up cooldown: True while the gesture is held to prevent re-firing
         # each frame. Resets to False when thumbs_up is no longer detected.
         self._thumbs_up_held: bool = False
+        # Move-to-slot block: True for one frame after lock mode exits to prevent
+        # accidental slot jumps caused by hand transitioning out of chop/stir pose.
+        self._move_blocked: bool = False
 
         if self.use_gesture:
             self._init_pipeline(
@@ -1102,9 +1105,10 @@ class Game:
                 self._lock_mode = None
                 self._locked_station = None
                 self._motion_gate_ready["chop"] = False
-                # Block thumbs_up for the next frame so a post-chop hand
-                # transition doesn't accidentally fire a confirm action.
+                # Block thumbs_up and move_to_slot for the next frame so a
+                # post-chop hand transition doesn't fire unintended actions.
                 self._thumbs_up_held = True
+                self._move_blocked = True
             elif self._lock_mode == "stir" and st and (
                 st.pot_cooked
                 or st.pot_burned
@@ -1115,6 +1119,7 @@ class Game:
                 self._motion_gate_ready["stir"] = False
                 # Same post-stir guard.
                 self._thumbs_up_held = True
+                self._move_blocked = True
         else:
             move_to_slot = gi.move_to_slot
             clicked_station = self._station_at_point(gi.station_click)
@@ -1875,6 +1880,10 @@ def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) ->
                 overlay_active=local_overlay,
                 thumbs_cooldown=game._thumbs_up_held,
             )
+            # If move is blocked (just exited lock mode), suppress slot movement
+            if game._move_blocked:
+                gesture_gi.move_to_slot = None
+                game._move_blocked = False
             # Update held state: reset when thumbs_up is no longer seen
             game._thumbs_up_held = any_thumbs_up
         else:

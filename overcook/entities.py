@@ -264,17 +264,19 @@ class Station:
 
     def _draw_chop_item(self, surf, ix, iy):
         """Draw the item on the chop board plus progress bar.
-        Always uses the base ingredient image (without _c suffix) so the
-        icon stays consistent before and after chopping."""
+        Shows the _c (chopped) image once chopping is complete."""
         item_id = self.chop_item["id"]
-        base_id = item_id.replace("_c", "")  # always show original ingredient
-        img = get_img(base_id, 32, 32)
+        chopped = self.chop_item.get("chopped", False)
+        # Use _c image after chopping, base image while in progress
+        display_id = item_id if chopped else item_id.replace("_c", "")
+        img = get_img(display_id, 32, 32)
         if img:
             surf.blit(img, (ix - 16, iy - 16))
         else:
+            base_id = item_id.replace("_c", "")
             col = INGS.get(base_id, {}).get("color", (150, 150, 150))
             pygame.draw.circle(surf, col, (ix, iy), 16)
-        if self.chop_item.get("chopped"):
+        if chopped:
             pygame.draw.line(surf, C["lime"], (ix - 6, iy + 4), (ix + 10, iy - 6), 2)
         else:
             bar(surf, self.x + 2, self.y - 8, self.w - 4, 5,

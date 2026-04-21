@@ -177,7 +177,9 @@ def target_slot_for(label: str) -> Optional[int]:
 
 @dataclass
 class GestureDebouncer:
-    """Confirm a gesture only after it persists for N consecutive frames."""
+    """Confirm a gesture only after it persists for N consecutive frames.
+    
+    thumbs_up uses n=2 for faster response; finger_N uses the default n=3."""
 
     n: int = 3
     _pending: Optional[str] = None
@@ -191,8 +193,11 @@ class GestureDebouncer:
             self._pending = label
             self._streak = 1
 
+        # thumbs_up confirms faster (n=2) to feel more responsive
+        threshold = 2 if label == LABEL_THUMBS_UP else self.n
+
         confirmed_now = False
-        if self._streak >= self.n and self._confirmed != label:
+        if self._streak >= threshold and self._confirmed != label:
             self._confirmed = label
             confirmed_now = True
 
