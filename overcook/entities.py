@@ -519,7 +519,7 @@ class Order:
         return None
 
     def draw(self, surf, x, y, w=80):
-        h = 56
+        h = 74
         urg  = self.t < 15 and self.status == "active"
         fail = self.status == "failed"
         brd  = C["red"] if fail else C["ord_urg"] if urg else C["ord_brd"]
@@ -535,11 +535,11 @@ class Order:
 
         needs = self.recipe["needs"]
         n_needs = len(needs)
-        img_sz = min(18, max(10, (w - 12) // max(n_needs, 1) - 3))
-        gap_i = 3
+        img_sz = min(36, max(20, (w - 16) // max(n_needs, 1) - 4))
+        gap_i = 5
         total_w = n_needs * img_sz + (n_needs - 1) * gap_i
         start_x = x + w // 2 - total_w // 2
-        iy = y + 20
+        iy = y + 22
         for idx_i, need in enumerate(needs):
             ix = start_x + idx_i * (img_sz + gap_i)
             base = need.replace("_c", "")
@@ -553,7 +553,7 @@ class Order:
 
         pct = self.t / ORDER_TIME if self.status == "active" else 0
         col_f = C["green"] if pct > 0.4 else C["orange"] if pct > 0.15 else C["red"]
-        bar(surf, x + 4, y + h - 11, w - 8, 6, pct, (25, 38, 48), col_f, 2)
+        bar(surf, x + 4, y + h - 13, w - 8, 7, pct, (25, 38, 48), col_f, 2)
 
     def to_dict(self) -> dict:
         """Serialize order state for network transmission."""

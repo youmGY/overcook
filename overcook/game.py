@@ -593,10 +593,14 @@ class Game:
         self.btn_action = self.btn_acts_map["confirm"]
         self.btn_start    = Btn(gw // 2 - 250, gh // 2 + 110, 240, 80, "Start",    (184, 101, 30))
         self.btn_settings = Btn(gw // 2 + 10,  gh // 2 + 110, 240, 80, "Settings", (55, 55, 110))
-        self.btn_pause_continue  = Btn(gw // 2 - 115, gh // 2 + 20, 110, 52, "Continue", (40, 120, 60))
-        self.btn_pause_restart   = Btn(gw // 2 + 5,   gh // 2 + 20, 110, 52, "Restart",  (120, 50, 50))
-        self.btn_pause_home      = Btn(gw // 2 - 115, gh // 2 + 82, 110, 42, "Home",     (80, 60, 120))
-        self.btn_pause_settings  = Btn(gw // 2 + 5,   gh // 2 + 82, 110, 42, "Settings", (55, 55, 110))
+        _bw, _bh, _gap = 120, 52, 12
+        _total = 4 * _bw + 3 * _gap
+        _bx = gw // 2 - _total // 2
+        _by = gh // 2 + 20
+        self.btn_pause_continue  = Btn(_bx,                        _by, _bw, _bh, "Continue", (40, 120, 60))
+        self.btn_pause_restart   = Btn(_bx + (_bw + _gap),         _by, _bw, _bh, "Restart",  (120, 50, 50))
+        self.btn_pause_home      = Btn(_bx + (_bw + _gap) * 2,     _by, _bw, _bh, "Home",     (80, 60, 120))
+        self.btn_pause_settings  = Btn(_bx + (_bw + _gap) * 3,     _by, _bw, _bh, "Settings", (55, 55, 110))
 
     def _near(self):
         px, py = self.player.center()
@@ -1278,7 +1282,8 @@ class Game:
         self.elapsed += dt
         if self.elapsed >= self.next_order:
             self._spawn_order()
-            self.next_order = self.elapsed + 15.0
+            order_interval = 10.0 if self.multiplayer else 15.0
+            self.next_order = self.elapsed + order_interval
 
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
@@ -1475,8 +1480,8 @@ class Game:
 
         ox = gw - 8
         for o in reversed([o for o in self.orders if o.status == "active"]):
-            ox -= 116
-            o.draw(screen, ox, 2, w=114)
+            ox -= 142
+            o.draw(screen, ox, 2, w=140)
 
         hint = self._hint()
         if hint:
@@ -1720,7 +1725,8 @@ class Game:
         self.elapsed += dt
         if self.elapsed >= self.next_order:
             self._spawn_order()
-            self.next_order = self.elapsed + 15.0
+            order_interval = 10.0 if self.multiplayer else 15.0
+            self.next_order = self.elapsed + order_interval
 
         # Timer
         self.timer = max(0.0, self.timer - dt)
