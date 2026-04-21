@@ -982,6 +982,23 @@ class Game:
             return "Action: Clear chop boards"
         return ""
 
+    def update_ui_buttons(self, mpos, mpressed) -> dict:
+        """Poll all action buttons and return a dict of triggered actions.
+
+        This is called by both the solo loop (inside update()) and the
+        multiplayer loop so that ChopChop / StirStir / Pause / OK buttons
+        work regardless of whether game.update() or server_tick() drives
+        the game state.
+
+        Returns a dict with bool values keyed by action name:
+        ``{"confirm": bool, "chop": bool, "stir": bool, "pause": bool}``
+        """
+        triggered: dict = {k: False for k in self.btn_acts_map}
+        for key, btn in self.btn_acts_map.items():
+            if btn.update(mpos, mpressed):
+                triggered[key] = True
+        return triggered
+
     def update(self, dt, gi: "GameInput", mpos, mpressed):
         gw, gh = screen.get_size()
         if gw != self.gw or gh != self.gh:
@@ -1065,16 +1082,13 @@ class Game:
 
         if self._lock_mode:
             # While action mode is locked, still allow movement controls.
+            btn_triggered = self.update_ui_buttons(mpos, mpressed)
             act_flags = {
-                "confirm": gi.confirm or gi.action,
-                "chop": gi.chop,
-                "stir": gi.stir,
-                "pause": False,
+                "confirm": gi.confirm or gi.action or btn_triggered.get("confirm", False),
+                "chop": gi.chop or btn_triggered.get("chop", False),
+                "stir": gi.stir or btn_triggered.get("stir", False),
+                "pause": btn_triggered.get("pause", False),
             }
-            for btn in self.btn_acts:
-                key = next(k for k, v in self.btn_acts_map.items() if v is btn)
-                if btn.update(mpos, mpressed):
-                    act_flags[key] = True
             if act_flags["pause"]:
                 self.state = "paused"
                 self.audio.play("ui_pause")
@@ -1170,17 +1184,13 @@ class Game:
                 self.player.y = float(self._gy() - Player.PH)
                 self.player.vy = 0.0
 
+            btn_triggered = self.update_ui_buttons(mpos, mpressed)
             act_flags = {
-                "confirm":  gi.confirm  or gi.action,
-                "chop":     gi.chop,
-                "stir":     gi.stir,
-                "pause":    False,
+                "confirm":  gi.confirm  or gi.action or btn_triggered.get("confirm", False),
+                "chop":     gi.chop     or btn_triggered.get("chop", False),
+                "stir":     gi.stir     or btn_triggered.get("stir", False),
+                "pause":    btn_triggered.get("pause", False),
             }
-
-            for btn in self.btn_acts:
-                key = next(k for k, v in self.btn_acts_map.items() if v is btn)
-                if btn.update(mpos, mpressed):
-                    act_flags[key] = True
 
             if act_flags["pause"]:
                 self.state = "paused"
@@ -2182,6 +2192,17 @@ def _main_multiplayer(ui_mode: str, args):
                 game, held, _gi_frame, station_click, overlay_click
             )
 
+            # Merge UI button clicks into host input
+            mpos = pygame.mouse.get_pos()
+            btn_triggered = game.update_ui_buttons(mpos, _btn_pressed)
+            if btn_triggered.get("confirm"): host_gi.confirm = True
+            if btn_triggered.get("chop"):    host_gi.chop    = True
+            if btn_triggered.get("stir"):    host_gi.stir    = True
+            if btn_triggered.get("pause"):
+                game.state = "paused"
+                game.audio.play("ui_pause")
+                game.audio.pause_bgm()
+
             # Collect client inputs
             net_inputs = server.collect_inputs()
             net_inputs[0] = host_gi.to_dict()  # Add host input
@@ -2220,6 +2241,17 @@ def _main_multiplayer(ui_mode: str, args):
             local_gi, pipeline_frame = _collect_local_input(
                 game, held, _gi_frame, station_click, overlay_click
             )
+
+            # Merge UI button clicks into local input
+            mpos = pygame.mouse.get_pos()
+            btn_triggered = game.update_ui_buttons(mpos, _btn_pressed)
+            if btn_triggered.get("confirm"): local_gi.confirm = True
+            if btn_triggered.get("chop"):    local_gi.chop    = True
+            if btn_triggered.get("stir"):    local_gi.stir    = True
+            if btn_triggered.get("pause"):
+                game.state = "paused"
+                game.audio.play("ui_pause")
+                game.audio.pause_bgm()
 
             # Send input to server
             client.send_input(local_gi.to_dict())
