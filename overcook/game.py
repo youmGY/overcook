@@ -1825,6 +1825,7 @@ def _main_solo(ui_mode: str, args):
     held      = {"left": False, "right": False}
     _gi_frame: dict = {}
     mpressed     = False
+    _click_this_frame = False  # True if MOUSEDOWN occurred this frame (before gesture step)
     station_click = None
     overlay_click = None
     pipeline_frame = None
@@ -1840,6 +1841,7 @@ def _main_solo(ui_mode: str, args):
         station_click = None
         overlay_click = None
         pipeline_frame = None
+        _click_this_frame = False  # reset each frame
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -1889,6 +1891,7 @@ def _main_solo(ui_mode: str, args):
                 if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mpressed = True
+                _click_this_frame = True
                 click_pos = pygame.mouse.get_pos()
                 if game.settings_overlay.handle_mousedown(click_pos):
                     pass  # consumed by settings overlay
@@ -1906,7 +1909,7 @@ def _main_solo(ui_mode: str, args):
         gi, pipeline_frame = _collect_local_input(
             game, held, _gi_frame, station_click, overlay_click
         )
-        game.update(dt, gi, mpos, mpressed)
+        game.update(dt, gi, mpos, _click_this_frame or mpressed)
 
         if game.state == "title": game.draw_title()
         elif game.state == "over": game.draw_over()
@@ -1986,6 +1989,7 @@ def _main_multiplayer(ui_mode: str, args):
         station_click = None
         overlay_click = None
         _gi_frame = {}
+        _click_this_frame = False
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -2023,6 +2027,7 @@ def _main_multiplayer(ui_mode: str, args):
                 if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mpressed = True
+                _click_this_frame = True
                 click_pos = pygame.mouse.get_pos()
                 # Assign click to overlay or station based on local overlay state
                 if game and game._player_overlays.get(getattr(game, 'local_player_id', 0), False):
@@ -2036,8 +2041,10 @@ def _main_multiplayer(ui_mode: str, args):
 
         # ── State Machine ─────────────────────────────────────────────
 
+        _btn_pressed = _click_this_frame or mpressed
+
         if lobby_state == "lobby_menu":
-            action = lobby_ui.update_menu(mpos, mpressed)
+            action = lobby_ui.update_menu(mpos, _btn_pressed)
             if action == "create":
                 host_ip = get_local_ip()
                 server = GameServer(host_ip, NET_PORT, room_name=f"{args.name}'s Room")
@@ -2057,7 +2064,7 @@ def _main_multiplayer(ui_mode: str, args):
             lobby_ui.draw_menu()
 
         elif lobby_state == "lobby_create":
-            action = lobby_ui.update_create(mpos, mpressed)
+            action = lobby_ui.update_create(mpos, _btn_pressed)
             if action == "ready":
                 server.set_host_ready(not server.host_ready)
             elif action == "start":
@@ -2102,7 +2109,7 @@ def _main_multiplayer(ui_mode: str, args):
             lobby_ui.draw_create(f"{server.host}:{server.port}")
 
         elif lobby_state == "lobby_join":
-            action = lobby_ui.update_join(mpos, mpressed, click_pos=click_pos)
+            action = lobby_ui.update_join(mpos, _btn_pressed, click_pos=click_pos)
             if action == "connect":
                 if lobby_ui.selected_room >= 0 and lobby_ui.selected_room < len(lobby_ui.rooms):
                     room = lobby_ui.rooms[lobby_ui.selected_room]
@@ -2123,7 +2130,7 @@ def _main_multiplayer(ui_mode: str, args):
             lobby_ui.draw_join()
 
         elif lobby_state == "lobby_wait":
-            action = lobby_ui.update_wait(mpos, mpressed)
+            action = lobby_ui.update_wait(mpos, _btn_pressed)
             if action == "ready":
                 client.send_ready(True)
             elif action == "back":

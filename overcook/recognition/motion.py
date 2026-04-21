@@ -108,7 +108,7 @@ _OSCILLATION_AMP_LARGE_Y = 0.08
 _MIN_ACTIVE_SPEED = 0.005
 _SPEED_WINDOW = 5
 
-_AXIS_DOMINANCE = 1.3
+_AXIS_DOMINANCE = 1.1
 _AMP_WINDOW = 30
 _HAND_CACHE_MAX = 15
 _STILL_SPEED_MAX = 0.002
@@ -424,8 +424,9 @@ class MotionDetector:
                 or (r_y_amp >= amp_large_y_thresh and chop_osc >= 2)
             ) and r_y_amp >= amp_y_thresh
 
-            moving = st.avg_speed >= active_speed_thresh
-            is_stir = moving and (
+            # Mirror chop logic exactly — no extra `moving` gate so slow
+            # stirring is not silently rejected.
+            is_stir = (
                 (stir_osc >= _OSCILLATION_MIN_STIR)
                 or (r_x_amp >= amp_large_x_thresh and stir_osc >= 2)
             ) and r_x_amp >= amp_x_thresh
