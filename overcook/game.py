@@ -1247,12 +1247,9 @@ class Game(GameDrawMixin):
         self.player.update(move_dir, dt, gw, self._gy())
 
     def _process_free_actions(self, act_flags):
-        """Shared non-lock action processing: confirm → chop → stir."""
+        """Shared non-lock action processing: chop → stir → confirm."""
         handled = False
-        if act_flags["confirm"]:
-            self.do_action()
-            handled = True
-        if act_flags["chop"] and not handled:
+        if act_flags["chop"]:
             st = self._near()
             if st and st.kind == "chop":
                 self._act_chop(st, chop_action=True)
@@ -1262,6 +1259,8 @@ class Game(GameDrawMixin):
             if st and st.kind == "pot":
                 self._act_pot(st, stir_only=True)
                 handled = True
+        if act_flags["confirm"] and not handled:
+            self.do_action()
 
     def _process_single_input(self, gi: GameInput, dt: float):
         """Process input for current self.player (extracted for multiplayer reuse)."""
