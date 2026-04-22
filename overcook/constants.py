@@ -68,14 +68,14 @@ CHOP_TIME  = 3.0
 CHOP_ACTIONS = 4
 STIR_ACTIONS = 5
 ORDER_TIME = 45.0
-GAME_TIME  = 150.0
+GAME_TIME  = 120.0
 
 # How many extra stirs beyond STIR_ACTIONS before the dish burns.
 OVER_STIR_THRESHOLD = STIR_ACTIONS + 5
 
 # Score penalties.
 WRONG_SUBMIT_PENALTY = 30  # submitting a dish with no matching order
-BURN_SUBMIT_PENALTY_FRAC = 0.5  # fraction of recipe pts deducted for burned dish
+BURN_SUBMIT_PENALTY = 70  # fixed pts deducted for submitting a burned dish
 
 # Player–station interaction range in pixels.
 INTERACTION_RANGE = 110
@@ -87,7 +87,7 @@ POPUP_LIFETIME_FRAMES = 30
 NET_PORT = 5555
 NET_DISCOVERY_PORT = 5556
 NET_MAX_PLAYERS = 4
-NET_TICK_RATE = 20  # server updates per second
+NET_TICK_RATE = 40  # server updates per second
 
 PLAYER_COLORS = [
     {"body": ( 83,  65, 183), "dark": ( 57,  40, 137), "hat": ( 38,  33, 105), "name": "Purple"},  # P0

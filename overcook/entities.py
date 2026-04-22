@@ -294,7 +294,27 @@ class Station:
 
     def _draw_pot_items(self, surf, ix, iy):
         """Draw ingredients in the pot plus cooking/burn progress bars."""
-        if self.pot_items:
+        # When cooking is done, show final dish icon on the station
+        # instead of individual ingredient icons.
+        if self.pot_cooked and self.pot_items:
+            dish_icon_size = 34
+            dish_img = None
+            if self.pot_burned:
+                dish_img = _load_completed_food_img("burned_dish.png", dish_icon_size, dish_icon_size)
+            else:
+                dish_name = _dish_name_from_contents(self.pot_items)
+                if dish_name:
+                    dish_img = _load_completed_food_img(f"{dish_name}.png", dish_icon_size, dish_icon_size)
+                if dish_img is None:
+                    dish_img = _load_completed_food_img("unknown_dish.png", dish_icon_size, dish_icon_size)
+
+            if dish_img:
+                surf.blit(dish_img, (ix - dish_img.get_width() // 2, iy - dish_img.get_height() // 2 + 80))
+            else:
+                # Fallback marker if icon file is missing.
+                col = C["burn"] if self.pot_burned else C["green"]
+                pygame.draw.circle(surf, col, (ix, iy), 16)
+        elif self.pot_items:
             n = min(len(self.pot_items), 3)
             for i, item in enumerate(self.pot_items[:3]):
                 ox = ix + (i - (n - 1) / 2) * 16
@@ -447,7 +467,7 @@ class Player:
             hy = py + 6 + bob
             item_id = self.holding.get("id", "")
             is_completed = bool(self.holding.get("cooked"))
-            item_size = 50 if is_completed else 32
+            item_size = 35 if is_completed else 32
             half = item_size // 2
 
             completed_img = _get_completed_food_img(self.holding, item_size, item_size)
@@ -471,7 +491,7 @@ class Player:
                      else C["green"] if self.holding.get("cooked") \
                      else C["lime"]  if self.holding.get("chopped") \
                      else ing.get("color", (150, 150, 150))
-                rad = 20 if is_completed else 15
+                rad = 16 if is_completed else 15
                 pygame.draw.circle(surf, col, (hx, hy), rad)
                 pygame.draw.circle(surf, (255, 255, 255, 50), (hx, hy), rad, 1)
                 if self.holding.get("burned"):

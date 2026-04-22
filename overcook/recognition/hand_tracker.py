@@ -94,7 +94,7 @@ class HandTracker:
                 for a, b in _HAND_CONNECTIONS:
                     cv2.line(frame_bgr, pts[a], pts[b], (0, 255, 0), 2, cv2.LINE_AA)
                 for pt in pts:
-                    cv2.circle(frame_bgr, pt, 4, (0, 0, 255), -1, cv2.LINE_AA)
+                    cv2.circle(frame_bgr, pt, 3, (0, 0, 255), -1, cv2.LINE_AA)
 
         now = perf_counter()
         dt = now - self._prev_ts

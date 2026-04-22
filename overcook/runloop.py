@@ -6,8 +6,8 @@ import pygame
 import sys
 
 from .engine import clock, FPS
-from .game import (
-    Game,
+from .game import Game
+from .input import (
     GameInput,
     hand_inputs_to_game_input,
     merge_inputs,
@@ -190,12 +190,42 @@ def _main_multiplayer(ui_mode: str, args):
     from .constants import NET_PORT, NET_TICK_RATE
 
     lobby_ui = LobbyUI()
+    lobby_ui.use_gesture = args.gesture
     lobby_state = "lobby_menu"
 
     server = None
     client = None
     scanner = None
     game = None
+    
+    def _build_lobby_gesture_pipeline():
+        if not args.gesture:
+            return None
+        try:
+            from .recognition.camera import CameraConfig
+            from .recognition.hand_tracker import HandTrackerConfig
+            from .recognition.interface import RecognitionPipeline
+
+            return RecognitionPipeline(
+                camera_cfg=CameraConfig(device_index=args.device, width=640, height=480, fps=30),
+                hand_cfg=HandTrackerConfig(
+                    max_num_hands=2,
+                    min_detection_confidence=0.2,
+                    min_tracking_confidence=0.2,
+                    detect_every_n_frames=1,
+                    input_scale=1.0,
+                ),
+                flip=args.flip,
+                clahe=args.clahe,
+                clahe_clip=args.clahe_clip,
+                clahe_grid=args.clahe_grid,
+            )
+        except Exception as e:
+            print(f"Failed to init gesture pipeline for lobby: {e}")
+            return None
+
+    # Gesture pipeline for lobby (when not in game)
+    lobby_gesture_pipeline = _build_lobby_gesture_pipeline()
 
     held = {"left": False, "right": False}
     mpressed = False
@@ -222,6 +252,8 @@ def _main_multiplayer(ui_mode: str, args):
                     scanner.stop()
                 if game:
                     game.shutdown()
+                if lobby_gesture_pipeline:
+                    lobby_gesture_pipeline.close()
                 pygame.quit()
                 return
             if event.type == pygame.KEYDOWN:
@@ -236,6 +268,8 @@ def _main_multiplayer(ui_mode: str, args):
                         client.close()
                     if scanner:
                         scanner.stop()
+                    if lobby_gesture_pipeline:
+                        lobby_gesture_pipeline.close()
                     pygame.quit()
                     return
                 if lobby_state.startswith("playing") and game:
@@ -291,15 +325,26 @@ def _main_multiplayer(ui_mode: str, args):
         mpos = pygame.mouse.get_pos()
         _btn_pressed = _click_this_frame or mpressed
 
+        # Recreate lobby camera pipeline after returning from gameplay.
+        if not lobby_state.startswith("playing") and args.gesture and lobby_gesture_pipeline is None:
+            lobby_gesture_pipeline = _build_lobby_gesture_pipeline()
+
+        # Collect gesture input if in lobby and gesture enabled
+        lobby_hand_inputs = None
+        lobby_pipeline_frame = None
+        if not lobby_state.startswith("playing") and lobby_gesture_pipeline:
+            lobby_hand_inputs = lobby_gesture_pipeline.step(draw_overlay=False)
+            lobby_pipeline_frame = lobby_gesture_pipeline.last_frame
+
         if lobby_state == "lobby_menu":
-            action = lobby_ui.update_menu(mpos, _btn_pressed)
+            action = lobby_ui.update_menu(mpos, _btn_pressed, hand_inputs=lobby_hand_inputs)
             if action == "create":
                 host_ip = get_local_ip()
                 server = GameServer(host_ip, NET_PORT, room_name=f"{args.name}'s Room")
                 server.start()
                 lobby_state = "lobby_create"
                 lobby_ui.players = [{"id": 0, "name": args.name, "ready": False}]
-                lobby_ui.status_text = f"Listening on {host_ip}:{NET_PORT}"
+                lobby_ui.status_text = "Room is open. Share your room name with friends."
             elif action == "join":
                 scanner = RoomScanner()
                 scanner.start()
@@ -307,18 +352,26 @@ def _main_multiplayer(ui_mode: str, args):
                 lobby_ui.rooms = []
                 lobby_ui.selected_room = -1
             elif action == "single":
+                if lobby_gesture_pipeline:
+                    lobby_gesture_pipeline.close()
+                    lobby_gesture_pipeline = None
                 _main_single(ui_mode, args)
                 mpressed = False
+            lobby_ui.last_hand_inputs = lobby_hand_inputs
+            lobby_ui.last_pipeline_frame = lobby_pipeline_frame
             lobby_ui.draw_menu()
 
         elif lobby_state == "lobby_create":
-            action = lobby_ui.update_create(mpos, _btn_pressed)
+            action = lobby_ui.update_create(mpos, _btn_pressed, hand_inputs=lobby_hand_inputs)
             if action == "ready":
                 server.set_host_ready(not server.host_ready)
             elif action == "start":
                 info = server.get_lobby_info()
                 if info["all_ready"] and info["count"] > 0:
                     player_names = {p["id"]: p["name"] for p in info["players"]}
+                    if lobby_gesture_pipeline:
+                        lobby_gesture_pipeline.close()
+                        lobby_gesture_pipeline = None
                     game = Game(
                         ui_mode=ui_mode,
                         use_gesture=args.gesture,
@@ -355,36 +408,46 @@ def _main_multiplayer(ui_mode: str, args):
 
             info = server.get_lobby_info()
             lobby_ui.players = info["players"]
-            lobby_ui.draw_create(f"{server.host}:{server.port}")
+            lobby_ui.last_hand_inputs = lobby_hand_inputs
+            lobby_ui.last_pipeline_frame = lobby_pipeline_frame
+            lobby_ui.draw_create()
 
         elif lobby_state == "lobby_join":
-            action = lobby_ui.update_join(mpos, _btn_pressed, click_pos=click_pos)
+            action = lobby_ui.update_join(mpos, _btn_pressed, hand_inputs=lobby_hand_inputs, click_pos=click_pos)
             if action == "connect":
                 if 0 <= lobby_ui.selected_room < len(lobby_ui.rooms):
                     room = lobby_ui.rooms[lobby_ui.selected_room]
                     client = GameClient(room["host"], room["port"], args.name)
                     if client.connect():
                         lobby_state = "lobby_wait"
-                        lobby_ui.status_text = f"Connected as Player {client.player_id + 1}"
+                        lobby_ui.status_text = f"Connected as {args.name}"
                     else:
                         lobby_ui.status_text = "Connection failed!"
                         client = None
             elif action == "back":
                 scanner.stop()
                 scanner = None
+                if lobby_gesture_pipeline:
+                    lobby_gesture_pipeline.close()
+                    lobby_gesture_pipeline = None
                 lobby_state = "lobby_menu"
                 continue
 
             lobby_ui.rooms = scanner.get_rooms()
+            lobby_ui.last_hand_inputs = lobby_hand_inputs
+            lobby_ui.last_pipeline_frame = lobby_pipeline_frame
             lobby_ui.draw_join()
 
         elif lobby_state == "lobby_wait":
-            action = lobby_ui.update_wait(mpos, _btn_pressed)
+            action = lobby_ui.update_wait(mpos, _btn_pressed, hand_inputs=lobby_hand_inputs)
             if action == "ready":
                 client.send_ready(True)
             elif action == "back":
                 client.close()
                 client = None
+                if lobby_gesture_pipeline:
+                    lobby_gesture_pipeline.close()
+                    lobby_gesture_pipeline = None
                 lobby_state = "lobby_menu"
                 continue
 
@@ -398,6 +461,9 @@ def _main_multiplayer(ui_mode: str, args):
                 event_msg = client.event_queue.get_nowait()
                 if event_msg.get("type") == "game_start":
                     player_names = {p["id"]: p["name"] for p in lobby_ui.players}
+                    if lobby_gesture_pipeline:
+                        lobby_gesture_pipeline.close()
+                        lobby_gesture_pipeline = None
                     game = Game(
                         ui_mode=ui_mode,
                         use_gesture=args.gesture,
@@ -423,6 +489,8 @@ def _main_multiplayer(ui_mode: str, args):
             except Exception:
                 pass
 
+            lobby_ui.last_hand_inputs = lobby_hand_inputs
+            lobby_ui.last_pipeline_frame = lobby_pipeline_frame
             lobby_ui.draw_wait()
 
         elif lobby_state == "playing_host":
@@ -431,8 +499,8 @@ def _main_multiplayer(ui_mode: str, args):
             if game.state != "play":
                 game.update(dt, GameInput(), mpos, _btn_pressed)
                 if game.state == "over":
-                    server.broadcast_game_over(game.score)
-                    server.stop()
+                    # Keep server alive so host can restart or return home.
+                    server.broadcast_state(game.serialize_state())
                     game.draw_over()
                 elif game.state == "title":
                     server.stop()
@@ -493,12 +561,9 @@ def _main_multiplayer(ui_mode: str, args):
                 server.broadcast_state(game.serialize_state())
 
             if game.state == "over":
-                server.broadcast_game_over(game.score)
-                server.stop()
                 game.draw_over()
                 pygame.display.flip()
-                game.shutdown()
-                return
+                continue
             game.draw(pipeline_frame)
             pygame.display.flip()
 
@@ -520,13 +585,6 @@ def _main_multiplayer(ui_mode: str, args):
                 pygame.display.flip()
                 continue
 
-            if game.state == "over":
-                game.draw_over()
-                pygame.display.flip()
-                client.close()
-                game.shutdown()
-                return
-
             if client_paused:
                 try:
                     state = client.state_queue.get_nowait()
@@ -547,9 +605,8 @@ def _main_multiplayer(ui_mode: str, args):
                 if game.state == "over":
                     game.draw_over()
                     pygame.display.flip()
-                    client.close()
-                    game.shutdown()
-                    return
+                    client_paused = False
+                    continue
                 game.update(dt, GameInput(), mpos, _btn_pressed)
                 if game.state == "play":
                     client_paused = False
@@ -604,8 +661,22 @@ def _main_multiplayer(ui_mode: str, args):
             except Exception:
                 pass
 
+            if game.state == "title":
+                client.close()
+                game.shutdown()
+                game = None
+                client = None
+                client_paused = False
+                lobby_state = "lobby_menu"
+                lobby_ui.audio.play_bgm("intro_bgm")
+                mpressed = False
+                pygame.display.flip()
+                continue
+
             if game.state == "paused":
                 game.draw_paused()
+            elif game.state == "over":
+                game.draw_over()
             else:
                 game.draw(pipeline_frame)
             pygame.display.flip()
