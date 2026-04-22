@@ -1215,6 +1215,8 @@ class Game:
                 # post-chop hand transition doesn't fire unintended actions.
                 self._thumbs_up_held = True
                 self._move_blocked = True
+                if self._pipeline:
+                    self._pipeline.reset_motion()
             elif self._lock_mode == "stir" and st and (
                 st.pot_cooked
                 or st.pot_burned
@@ -1226,6 +1228,8 @@ class Game:
                 # Same post-stir guard.
                 self._thumbs_up_held = True
                 self._move_blocked = True
+                if self._pipeline:
+                    self._pipeline.reset_motion()
         else:
             move_to_slot = gi.move_to_slot if self._station_shortcuts_enabled() else None
             clicked_station = self._station_at_point(gi.station_click) if self._station_shortcuts_enabled() else None

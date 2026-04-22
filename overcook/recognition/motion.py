@@ -114,7 +114,7 @@ _HAND_CACHE_MAX = 15
 _STILL_SPEED_MAX = 0.002
 _STILL_RESET_FRAMES = 30
 _HOLD_FRAMES = 10
-_BUFFER_MAXLEN = 120
+_BUFFER_MAXLEN = 600
 _DESIGN_FPS = 30
 _FPS_WARMUP_MIN = 8
 _HAND_SCALE_REF = 0.12
@@ -265,6 +265,11 @@ class MotionDetector:
             "right": MotionDebug(),
         }
 
+    def reset_hand(self, hand: str = "right") -> None:
+        """Clear motion tracking state for one hand (called by game on chop/stir end)."""
+        if hand in self._state:
+            _reset_motion_track_state(self._state[hand])
+
     def update(
         self,
         hand_flags: Dict[str, HandFlags],
@@ -393,6 +398,12 @@ class MotionDetector:
                     if new_dir_y != st._dir_y:
                         if abs(st._ema_y - st._extreme_y) >= amp_y_thresh:
                             st._rev_chop += 1
+                            # Clear y buffer on valid reversal; seed with the
+                            # previous extreme so amplitude recovers instantly.
+                            prev_extreme_y = st._extreme_y
+                            st.wy.clear()
+                            st.wy.append(prev_extreme_y)
+                            st.wy.append(wy_raw)
                         st._extreme_y = st._ema_y
                         st._dir_y = new_dir_y
                     elif (st._dir_y == 1 and st._ema_y > st._extreme_y) or (st._dir_y == -1 and st._ema_y < st._extreme_y):
@@ -406,6 +417,11 @@ class MotionDetector:
                     if new_dir_x != st._dir_x:
                         if abs(st._ema_x - st._extreme_x) >= amp_x_thresh:
                             st._rev_stir += 1
+                            # Clear x buffer on valid reversal (same rationale).
+                            prev_extreme_x = st._extreme_x
+                            st.wx.clear()
+                            st.wx.append(prev_extreme_x)
+                            st.wx.append(wx_raw)
                         st._extreme_x = st._ema_x
                         st._dir_x = new_dir_x
                     elif (st._dir_x == 1 and st._ema_x > st._extreme_x) or (st._dir_x == -1 and st._ema_x < st._extreme_x):
