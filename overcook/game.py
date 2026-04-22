@@ -1045,51 +1045,65 @@ class Game:
         self.audio.play("order_bell")
 
     def _hint(self):
+        def _apply_hint_visibility(msg: str) -> str:
+            # Keep advanced mode clean by hiding beginner instructional prompts.
+            if not self.settings_overlay.amateur_mode:
+                beginner_tokens = (
+                    "Action:",
+                    "Press Chop",
+                    "Press Stir",
+                    "Chop button:",
+                    "Stir button:",
+                )
+                if any(tok in msg for tok in beginner_tokens):
+                    return ""
+            return msg
+
         if self._lock_mode == "chop" and self._locked_station:
             st = self._locked_station
-            return f"Chopping! Press Chop ({st.chop_hits}/{CHOP_ACTIONS})"
+            return _apply_hint_visibility(f"Chopping! Press Chop ({st.chop_hits}/{CHOP_ACTIONS})")
         if self._lock_mode == "stir" and self._locked_station:
             st = self._locked_station
-            return f"Stirring! Press Stir ({st.pot_stirs}/{STIR_ACTIONS})"
+            return _apply_hint_visibility(f"Stirring! Press Stir ({st.pot_stirs}/{STIR_ACTIONS})")
         # 로컬 플레이어의 overlay 상태 확인
         local_overlay_active = self._player_overlays.get(self.local_player_id, False)
         if local_overlay_active: 
-            return "Click an ingredient card  |  ESC to cancel"
+            return _apply_hint_visibility("Click an ingredient card  |  ESC to cancel")
         st = self._near()
-        if not st: return ""
+        if not st: return _apply_hint_visibility("")
         h = self.player.holding
         k = st.kind
         if k == "ing":
-            return "Action: Open pantry" if not h else "Action: Drop item first"
+            return _apply_hint_visibility("Action: Open pantry" if not h else "Action: Drop item first")
         if k == "chop":
             if h and not h.get("chopped") and INGS.get(h.get("id", "").replace("_c", ""), {}).get("can_chop"):
-                return "Action: Place on board  |  Chop!: Start chopping"
+                return _apply_hint_visibility("Action: Place on board  |  Chop!: Start chopping")
             if not h and st.chop_item and st.chop_item.get("chopped"):
-                return "Action: Pick chopped item"
+                return _apply_hint_visibility("Action: Pick chopped item")
             if not h and st.chop_item:
-                return f"Chop button: {st.chop_hits}/{CHOP_ACTIONS}"
+                return _apply_hint_visibility(f"Chop button: {st.chop_hits}/{CHOP_ACTIONS}")
         if k == "pot":
             burned = st.pot_burned
-            if burned: return "Action: Pick up burned dish (trash to discard)"
+            if burned: return _apply_hint_visibility("Action: Pick up burned dish (trash to discard)")
             if h and not st.pot_cooked:
                 base = h.get("id", "").replace("_c", "")
                 if INGS.get(base, {}).get("can_chop") and not h.get("chopped"):
-                    return "Chop it first before adding to pot!"
-                return "Action: Add to pot"
+                    return _apply_hint_visibility("Chop it first before adding to pot!")
+                return _apply_hint_visibility("Action: Add to pot")
             if not h and st.pot_items and not st.pot_cooking and not st.pot_cooked:
-                return f"Stir to start cooking! (max {OVER_STIR_THRESHOLD - 1} stirs)"
-            if not h and st.pot_cooked: return "Action: Pick cooked dish"
-            if not h and st.pot_cooking: return f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {OVER_STIR_THRESHOLD})"
+                return _apply_hint_visibility(f"Stir to start cooking! (max {OVER_STIR_THRESHOLD - 1} stirs)")
+            if not h and st.pot_cooked: return _apply_hint_visibility("Action: Pick cooked dish")
+            if not h and st.pot_cooking: return _apply_hint_visibility(f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {OVER_STIR_THRESHOLD})")
         if k == "submit":
             if h and h.get("cooked"):
-                if h.get("burned"): return "Action: Submit burned dish (penalty!)"
-                return "Action: Submit dish!"
+                if h.get("burned"): return _apply_hint_visibility("Action: Submit burned dish (penalty!)")
+                return _apply_hint_visibility("Action: Submit dish!")
             dish, _ = self._find_submit_dish()
-            return "Action: Submit dish!" if dish else "Action: Nothing to submit"
+            return _apply_hint_visibility("Action: Submit dish!" if dish else "Action: Nothing to submit")
         if k == "trash":
-            if h: return "Action: Trash item"
-            return "Action: Clear chop boards"
-        return ""
+            if h: return _apply_hint_visibility("Action: Trash item")
+            return _apply_hint_visibility("Action: Clear chop boards")
+        return _apply_hint_visibility("")
 
     def update_ui_buttons(self, mpos, mpressed) -> dict:
         """Poll all action buttons and return a dict of triggered actions.
