@@ -1,13 +1,13 @@
 """
-웹캠으로 finger_3 랜드마크 수집
+웹캠으로 finger_4 랜드마크 수집
 
 Space: 현재 프레임의 랜드마크 저장
 q / ESC: 종료 & 저장
 
 사용법:
-    python train/collect_finger3.py
+    python train/collect_finger4.py
 출력:
-    train/landmarks_finger3.npz  (landmarks, labels, handedness)
+    train/landmarks_finger4.npz  (landmarks, labels, handedness)
     기존 파일이 있으면 이어서 저장.
 """
 
@@ -21,8 +21,9 @@ import mediapipe as mp
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
-HAGRID_THREE2 = 16  # three2 → LABEL_REMAP에서 finger_3(2)로 매핑됨
+HAGRID_FOUR = 3  # four → LABEL_REMAP에서 finger_4로 매핑됨
 GAME_LABELS = ['finger_1', 'finger_2', 'finger_3', 'finger_3_another', 'finger_4', 'finger_5', 'thumbs_up', 'fist']
+CORRECT_IDX = 4  # finger_4
 
 
 # ── 정규화 & 피처 (기존 모델 추론용) ──────────────────────────
@@ -79,7 +80,7 @@ def landmarks_to_features(lm_norm: np.ndarray):
 
 def main():
     base_dir = os.path.dirname(__file__)
-    save_path = os.path.join(base_dir, 'landmarks_finger3.npz')
+    save_path = os.path.join(base_dir, 'landmarks_finger4.npz')
 
     # 기존 데이터 로드
     if os.path.exists(save_path):
@@ -93,7 +94,7 @@ def main():
         lb_list = []
         hd_list = []
 
-    # 60-dim ONNX 모델 로드 (norm 56 + thumb cosine 4)
+    # 60-dim ONNX 모델 로드
     onnx_path = os.path.join(base_dir, 'gesture_mlp_60f_8cls.onnx')
     session = None
     if os.path.exists(onnx_path):
@@ -104,9 +105,7 @@ def main():
         print(f"[WARN] 60f 모델 없음: {onnx_path} — 판정 표시 안 함")
 
     # MediaPipe HandLandmarker
-    task_path = os.path.abspath(
-        os.path.join(base_dir, "..", "src", "recognition", "hand_landmarker.task")
-    )
+    task_path = 'overcook\\recognition\\models\\hand_landmarker.task'
     if not os.path.exists(task_path):
         print(f"[ERROR] hand_landmarker.task 없음: {task_path}")
         sys.exit(1)
@@ -156,7 +155,7 @@ def main():
             cv2.putText(frame, f"Hand: {h_label}", (10, h - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 200, 0), 2)
 
-            # 기존 모델 추론
+            # 모델 추론
             if session is not None:
                 lm_norm = normalize_landmarks(lm_current.copy(), is_left_current)
                 if lm_norm is not None:
@@ -167,16 +166,14 @@ def main():
                     pred_label = GAME_LABELS[pred]
                     conf = probs[pred]
 
-                    # 정답(finger_3)이면 초록, 오답이면 빨강
-                    color = (0, 255, 0) if pred == 2 else (0, 0, 255)
+                    color = (0, 255, 0) if pred == CORRECT_IDX else (0, 0, 255)
                     cv2.putText(frame, f"Model: {pred_label} ({conf:.0%})", (10, h - 50),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-                    # 확률 바
                     for j, (name, p) in enumerate(zip(GAME_LABELS, probs)):
                         bar_w = int(p * 150)
                         c_bar = (0, 255, 0) if j == pred else (100, 100, 100)
-                        if j == 2:  # finger_3 강조
+                        if j == CORRECT_IDX:
                             c_bar = (255, 255, 0) if j != pred else (0, 255, 0)
                         y0 = 80 + j * 22
                         cv2.rectangle(frame, (w - 280, y0), (w - 280 + bar_w, y0 + 16), c_bar, -1)
@@ -185,17 +182,17 @@ def main():
 
         # 상태 표시
         status = "DETECTED" if detected else "NO HAND"
-        cv2.putText(frame, f"finger_3 collector | {status}", (10, 30),
+        cv2.putText(frame, f"finger_4 collector | {status}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0) if detected else (0, 0, 255), 2)
         cv2.putText(frame, f"Saved: {count}", (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        cv2.imshow("Collect finger_3", frame)
+        cv2.imshow("Collect finger_4", frame)
         key = cv2.waitKey(1) & 0xFF
 
         if key == ord(' ') and detected and lm_current is not None:
             lm_list.append(lm_current)
-            lb_list.append(HAGRID_THREE2)
+            lb_list.append(HAGRID_FOUR)
             hd_list.append(0 if is_left_current else 1)
             count += 1
             print(f"  저장 #{count}")

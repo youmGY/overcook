@@ -56,7 +56,9 @@ HIDDEN = (64, 32)
 INPUT_DIM = 60  # 56 (norm coords) + 4 (thumb angle cosines)
 WEBCAM_REPEAT_F2 = 8  # finger_2 웹캠 데이터 오버샘플링 배수
 WEBCAM_REPEAT_F3 = 1  # finger_3 웹캠 데이터 오버샘플링 배수
+WEBCAM_REPEAT_F4 = 3  # finger_4 웹캠 데이터 오버샘플링 배수
 WEBCAM_REPEAT_F5 = 5  # finger_5 웹캠 데이터 오버샘플링 배수
+WEBCAM_REPEAT_TU = 3  # thumbs_up 웹캠 데이터 오버샘플링 배수
 
 print(f"특성 차원: {INPUT_DIM}, 히든 레이어: {HIDDEN}")
 print(f"클래스: {NUM_CLASSES}개 — {GAME_LABELS}")
@@ -154,7 +156,9 @@ base_dir = os.path.dirname(__file__)
 webcam_groups = {
     'finger_2': (['landmarks_finger2.npz'], WEBCAM_REPEAT_F2),
     'finger_3': (['landmarks_finger3.npz', 'landmarks_finger3_sy.npz'], WEBCAM_REPEAT_F3),
+    'finger_4': (['landmarks_finger4.npz'], WEBCAM_REPEAT_F4),
     'finger_5': (['landmarks_finger5.npz'], WEBCAM_REPEAT_F5),
+    'thumbs_up': (['landmarks_thumbs_up.npz'], WEBCAM_REPEAT_TU),
 }
 
 for group_name, (files, repeat) in webcam_groups.items():

@@ -22,8 +22,8 @@ from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
 HAGRID_PALM = 9  # palm → LABEL_REMAP에서 finger_5(4)로 매핑됨
-GAME_LABELS = ['finger_1', 'finger_2', 'finger_3', 'finger_4', 'finger_5', 'thumbs_up', 'fist']
-CORRECT_IDX = 4  # finger_5
+GAME_LABELS = ['finger_1', 'finger_2', 'finger_3', 'finger_3_another', 'finger_4', 'finger_5', 'thumbs_up', 'fist']
+CORRECT_IDX = 5  # finger_5
 
 
 # ── 정규화 & 피처 (기존 모델 추론용) ──────────────────────────
@@ -95,7 +95,7 @@ def main():
         hd_list = []
 
     # 60-dim ONNX 모델 로드
-    onnx_path = os.path.join(base_dir, 'gesture_mlp_60f.onnx')
+    onnx_path = os.path.join(base_dir, 'gesture_mlp_60f_8cls.onnx')
     session = None
     if os.path.exists(onnx_path):
         session = ort.InferenceSession(onnx_path)
