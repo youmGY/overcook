@@ -198,15 +198,15 @@ def _main_multiplayer(ui_mode: str, args):
     scanner = None
     game = None
     
-    # Gesture pipeline for lobby (when not in game)
-    lobby_gesture_pipeline = None
-    if args.gesture:
+    def _build_lobby_gesture_pipeline():
+        if not args.gesture:
+            return None
         try:
             from .recognition.camera import CameraConfig
             from .recognition.hand_tracker import HandTrackerConfig
             from .recognition.interface import RecognitionPipeline
-            
-            lobby_gesture_pipeline = RecognitionPipeline(
+
+            return RecognitionPipeline(
                 camera_cfg=CameraConfig(device_index=args.device, width=640, height=480, fps=30),
                 hand_cfg=HandTrackerConfig(
                     max_num_hands=2,
@@ -222,7 +222,10 @@ def _main_multiplayer(ui_mode: str, args):
             )
         except Exception as e:
             print(f"Failed to init gesture pipeline for lobby: {e}")
-            lobby_gesture_pipeline = None
+            return None
+
+    # Gesture pipeline for lobby (when not in game)
+    lobby_gesture_pipeline = _build_lobby_gesture_pipeline()
 
     held = {"left": False, "right": False}
     mpressed = False
@@ -249,6 +252,8 @@ def _main_multiplayer(ui_mode: str, args):
                     scanner.stop()
                 if game:
                     game.shutdown()
+                if lobby_gesture_pipeline:
+                    lobby_gesture_pipeline.close()
                 pygame.quit()
                 return
             if event.type == pygame.KEYDOWN:
@@ -263,6 +268,8 @@ def _main_multiplayer(ui_mode: str, args):
                         client.close()
                     if scanner:
                         scanner.stop()
+                    if lobby_gesture_pipeline:
+                        lobby_gesture_pipeline.close()
                     pygame.quit()
                     return
                 if lobby_state.startswith("playing") and game:
@@ -318,6 +325,10 @@ def _main_multiplayer(ui_mode: str, args):
         mpos = pygame.mouse.get_pos()
         _btn_pressed = _click_this_frame or mpressed
 
+        # Recreate lobby camera pipeline after returning from gameplay.
+        if not lobby_state.startswith("playing") and args.gesture and lobby_gesture_pipeline is None:
+            lobby_gesture_pipeline = _build_lobby_gesture_pipeline()
+
         # Collect gesture input if in lobby and gesture enabled
         lobby_hand_inputs = None
         lobby_pipeline_frame = None
@@ -333,7 +344,7 @@ def _main_multiplayer(ui_mode: str, args):
                 server.start()
                 lobby_state = "lobby_create"
                 lobby_ui.players = [{"id": 0, "name": args.name, "ready": False}]
-                lobby_ui.status_text = f"Listening on {host_ip}:{NET_PORT}"
+                lobby_ui.status_text = "Room is open. Share your room name with friends."
             elif action == "join":
                 scanner = RoomScanner()
                 scanner.start()
@@ -399,7 +410,7 @@ def _main_multiplayer(ui_mode: str, args):
             lobby_ui.players = info["players"]
             lobby_ui.last_hand_inputs = lobby_hand_inputs
             lobby_ui.last_pipeline_frame = lobby_pipeline_frame
-            lobby_ui.draw_create(f"{server.host}:{server.port}")
+            lobby_ui.draw_create()
 
         elif lobby_state == "lobby_join":
             action = lobby_ui.update_join(mpos, _btn_pressed, hand_inputs=lobby_hand_inputs, click_pos=click_pos)
@@ -409,7 +420,7 @@ def _main_multiplayer(ui_mode: str, args):
                     client = GameClient(room["host"], room["port"], args.name)
                     if client.connect():
                         lobby_state = "lobby_wait"
-                        lobby_ui.status_text = f"Connected as Player {client.player_id + 1}"
+                        lobby_ui.status_text = f"Connected as {args.name}"
                     else:
                         lobby_ui.status_text = "Connection failed!"
                         client = None

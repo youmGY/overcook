@@ -236,12 +236,15 @@ class LobbyUI:
         if self.last_hand_inputs:
             self._draw_hand_visualization(self.last_hand_inputs)
 
-    def draw_create(self, host_ip: str):
+    def draw_create(self):
         self._maybe_rebuild()
         gw, gh = screen.get_size()
         screen.fill(C["bg"])
         txt(screen, "Room Created", 32, C["gold"], gw // 2, 40)
-        txt(screen, f"IP: {host_ip}", 14, (170, 170, 210), gw // 2, 70)
+        host_name = next((p.get("name", "Host") for p in self.players if p.get("id") == 0), None)
+        if not host_name:
+            host_name = self.players[0].get("name", "Host") if self.players else "Host"
+        txt(screen, f"Host: {host_name}", 14, (170, 170, 210), gw // 2, 70)
 
         self._draw_player_list(gw, gh)
 
@@ -279,7 +282,7 @@ class LobbyUI:
                 rx = gw // 2 - 200
                 rr(screen, col, (rx, y, 400, 44), 8)
                 pygame.draw.rect(screen, brd, (rx, y, 400, 44), 2, border_radius=8)
-                txt(screen, f"{room['name']}  ({room['host']}:{room['port']})",
+                txt(screen, f"{room['name']}",
                     14, C["white"], gw // 2, y + 14)
                 txt(screen, f"Max {room['max_players']} players",
                     12, (150, 150, 180), gw // 2, y + 32)
