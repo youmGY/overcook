@@ -1037,6 +1037,8 @@ class Game:
 
     def _hint(self):
         def _apply_hint_visibility(msg: str) -> str:
+            if self.multiplayer and "Stir to start" in msg:
+                return ""
             # Keep advanced mode clean by hiding beginner instructional prompts.
             if not self.settings_overlay.amateur_mode:
                 beginner_tokens = (
@@ -1045,7 +1047,7 @@ class Game:
                     "Press Stir",
                     "Chop button:",
                     "Stir button:",
-                    # "Stir to start",
+                    "Stir to start",
                     # "Chop it first",
                 )
                 if any(tok in msg for tok in beginner_tokens):
