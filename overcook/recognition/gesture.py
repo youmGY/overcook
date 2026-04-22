@@ -122,7 +122,7 @@ def landmarks_to_numpy(landmarks) -> np.ndarray:
 
 # ---- DNN classifier ----
 
-DEFAULT_GESTURE_CONFIDENCE = 0.8
+DEFAULT_GESTURE_CONFIDENCE = 0.7
 
 class GestureClassifierDNN:
     """ONNX MLP classifier for single-hand gesture recognition."""

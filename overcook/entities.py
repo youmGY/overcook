@@ -447,7 +447,7 @@ class Player:
             hy = py + 6 + bob
             item_id = self.holding.get("id", "")
             is_completed = bool(self.holding.get("cooked"))
-            item_size = 50 if is_completed else 32
+            item_size = 35 if is_completed else 32
             half = item_size // 2
 
             completed_img = _get_completed_food_img(self.holding, item_size, item_size)
@@ -471,7 +471,7 @@ class Player:
                      else C["green"] if self.holding.get("cooked") \
                      else C["lime"]  if self.holding.get("chopped") \
                      else ing.get("color", (150, 150, 150))
-                rad = 20 if is_completed else 15
+                rad = 16 if is_completed else 15
                 pygame.draw.circle(surf, col, (hx, hy), rad)
                 pygame.draw.circle(surf, (255, 255, 255, 50), (hx, hy), rad, 1)
                 if self.holding.get("burned"):

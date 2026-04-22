@@ -1054,6 +1054,8 @@ class Game:
                     "Press Stir",
                     "Chop button:",
                     "Stir button:",
+                    # "Stir to start",
+                    # "Chop it first",
                 )
                 if any(tok in msg for tok in beginner_tokens):
                     return ""
