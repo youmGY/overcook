@@ -178,7 +178,7 @@ class RecognitionPipeline:
             mp_label = self._mp_handedness_label(hand_id)
 
             lm_np = landmarks_to_numpy(state.landmarks)
-            is_left = (mp_label == "Left")
+            is_left = (mp_label != "Left")
             raw_label, _conf, count = self._gesture_dnn.predict(lm_np, is_left)
             label, just_confirmed = state.debouncer.update(raw_label)
 
