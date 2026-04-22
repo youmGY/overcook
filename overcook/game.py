@@ -9,12 +9,11 @@
 """
 
 import dataclasses
-import argparse
 import os
 import pygame
-import sys
 import random
 import logging
+import time
 from typing import Optional
 
 try:
@@ -22,7 +21,7 @@ try:
 except Exception:
     cv2 = None
 
-from .engine import screen, clock, FPS, F, get_img
+from .engine import screen, F, get_img
 from .constants import (
     C, INGS, ING_KEYS, RECIPES,
     BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS,
@@ -215,6 +214,13 @@ class Game:
         self._game_bg_img = None
         self._load_game_bg()
 
+        # Pause-screen recording state
+        self._recording_active: bool = False
+        self._record_writer = None
+        self._record_path: Optional[str] = None
+        self._record_fps: int = 30
+        self._recordings_dir = os.path.join(_ROOT, "recordings")
+
         if self.use_gesture:
             self._init_pipeline(
                 flip,
@@ -310,7 +316,7 @@ class Game:
             from .recognition.interface import RecognitionPipeline
 
             fps = 60 if fast_motion else 30
-            max_hands = 1
+            max_hands = 1 if fast_motion else 2
             min_conf = 0.15 if fast_motion else 0.2
             self._pipeline = RecognitionPipeline(
                 camera_cfg=CameraConfig(device_index=device, width=640, height=480, fps=fps),
@@ -341,12 +347,66 @@ class Game:
         return hands, frame
 
     def shutdown(self):
+        self._stop_recording("shutdown")
         if self._pipeline:
             self._pipeline.close()
             self._pipeline = None
         if self._camera:
             self._camera.release()
             self._camera = None
+
+    def _record_btn_style(self) -> tuple[str, tuple[int, int, int]]:
+        if self._recording_active:
+            return "Stop Rec", (155, 45, 45)
+        return "Record", (150, 35, 35)
+
+    def _start_recording(self):
+        if self._recording_active:
+            return
+        if cv2 is None:
+            self._pop(self.gw // 2, 70, "OpenCV unavailable: cannot record", C["red"])
+            return
+        os.makedirs(self._recordings_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        self._record_path = os.path.join(self._recordings_dir, f"overcook_{stamp}.mp4")
+        self._record_writer = None
+        self._recording_active = True
+        self._pop(self.gw // 2, 70, "Recording started", C["gold"])
+
+    def _stop_recording(self, _reason: str = ""):
+        if not self._recording_active and self._record_writer is None:
+            return
+        try:
+            if self._record_writer is not None:
+                self._record_writer.release()
+        finally:
+            was_active = self._recording_active
+            self._record_writer = None
+            self._recording_active = False
+            if was_active and self._record_path:
+                self._pop(self.gw // 2, 70, f"Saved: {os.path.basename(self._record_path)}", C["lime"])
+
+    def _record_frame(self):
+        if not self._recording_active or cv2 is None:
+            return
+        try:
+            frame_rgb = pygame.surfarray.array3d(screen)
+            frame_rgb = frame_rgb.swapaxes(0, 1)
+            frame_bgr = frame_rgb[:, :, ::-1]
+            h, w = frame_bgr.shape[:2]
+
+            if self._record_writer is None:
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                self._record_writer = cv2.VideoWriter(self._record_path, fourcc, self._record_fps, (w, h))
+                if not self._record_writer or not self._record_writer.isOpened():
+                    self._record_writer = None
+                    self._recording_active = False
+                    self._pop(self.gw // 2, 70, "Failed to start recorder", C["red"])
+                    return
+
+            self._record_writer.write(frame_bgr)
+        except Exception:
+            self._stop_recording("record_error")
 
     def reset(self):
         log.info("--- GAME RESET ---")
@@ -468,24 +528,13 @@ class Game:
 
     def _recipe_panel_rect(self):
         gw, gh = screen.get_size()
-        HUD_H = 44 # 상단 HUD(점수/타이머)의 높이
+        HUD_H = 44
         gy = self._gy()
         station_top = gy - Station.SH - int(self.station_row_offset) - 40
-        
-        # 📌 1. 좌우 여백 조절 (숫자를 키우면 화면 안쪽으로 더 들어옵니다)
-        pad = 8 
-        
-        # 📌 2. Y축(세로) 시작 위치 조절 (더 밑으로 내리고 싶다면 패딩을 더하세요. 예: HUD_H + pad + 20)
-        start_y = HUD_H + pad + 45
-
+        pad = 8
         full_h = max(70, station_top - HUD_H - pad * 2)
-        
-        # 📌 3. 전체 영역의 높이 조절 (0.82 비율을 1.0으로 하면 위아래로 더 길어집니다)
-        reduced_h = int(full_h * 0.6) 
-        
-        # (시작X, 시작Y, 가로길이, 세로길이) 순서입니다.
-        # 화면 좌우 너비를 좁히고 싶다면 gw - pad * 2 부분에서 추가로 값을 빼주면 됩니다.
-        return (pad, start_y, gw - pad * 2, reduced_h)
+        reduced_h = int(full_h * 0.82)
+        return (pad, HUD_H + pad, gw - pad * 2, reduced_h)
 
     def _camera_rect_from_controls(self):
         return getattr(self, "_cam_slot_rect", None)
@@ -613,6 +662,8 @@ class Game:
         self.btn_pause_restart   = Btn(_bx + (_bw + _gap),         _by, _bw, _bh, "Restart",  (120, 50, 50))
         self.btn_pause_home      = Btn(_bx + (_bw + _gap) * 2,     _by, _bw, _bh, "Home",     (80, 60, 120))
         self.btn_pause_settings  = Btn(_bx + (_bw + _gap) * 3,     _by, _bw, _bh, "Settings", (55, 55, 110))
+        rec_label, rec_col = self._record_btn_style()
+        self.btn_pause_record    = Btn(gw // 2 - 90, _by + _bh + 12, 180, 46, rec_label, rec_col)
 
     def _near(self):
         px, py = self.player.center()
@@ -1080,15 +1131,26 @@ class Game:
                 self.audio.play("ui_resume")
                 self.audio.unpause_bgm()
             if self.btn_pause_restart.update(mpos, mpressed):
+                self._stop_recording("restart")
                 self._start_game_session()
                 self.audio.play("ui_click")
             if self.btn_pause_home.update(mpos, mpressed):
+                self._stop_recording("home")
                 self.audio.stop_bgm()
                 self.audio.play_bgm("intro_bgm")
                 self.state = "title"
                 self.audio.play("ui_click")
             if self.btn_pause_settings.update(mpos, mpressed):
                 self.settings_overlay.active = True
+                self.audio.play("ui_click")
+            if self.btn_pause_record.update(mpos, mpressed):
+                if self._recording_active:
+                    self._stop_recording("manual")
+                else:
+                    self._start_recording()
+                rec_label, rec_col = self._record_btn_style()
+                self.btn_pause_record.label = rec_label
+                self.btn_pause_record.base = rec_col
                 self.audio.play("ui_click")
             return
 
@@ -1299,6 +1361,7 @@ class Game:
 
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
+            self._stop_recording("game_over")
             self.state = "over"
             if self.score > 0:
                 self.audio.play("fanfare_win")
@@ -1367,18 +1430,29 @@ class Game:
                 btn.draw(screen)
             self._draw_camera_panel(pipeline_frame)
 
+        if self.state == "play":
+            self._record_frame()
+
     def _draw_recipes_panel(self):
         rx, ry, rw, rh = self._recipe_panel_rect()
         if rh < 60: return
 
+        rr(screen, (16, 20, 48), (rx, ry, rw, rh), 10)
+        pygame.draw.rect(screen, (45, 40, 100), (rx, ry, rw, rh), 1, border_radius=10)
+
+        title_s = F[14].render("Current Orders", True, C["gold"])
+        screen.blit(title_s, (rx + 10, ry + 6))
+
         active_orders = [o for o in self.orders if o.status == "active"]
         if not active_orders:
+            no_order_s = F[12].render("No active orders", True, (150, 150, 150))
+            screen.blit(no_order_s, (rx + 10, ry + 35))
             return
 
         n = len(active_orders)
-        # 전체 패널 배경과 타이틀이 없어졌으므로 영역을 전부 카드가 차지하게 조정
-        area_y = ry
-        area_h = rh
+        TITLE_H = 24
+        area_y = ry + TITLE_H
+        area_h = rh - TITLE_H - 4
         area_w = rw - 12
 
         card_w = area_w // n - 6
@@ -1402,25 +1476,21 @@ class Game:
 
             if cy_ + card_h > ry + rh - 2: break
 
-            # 반투명 베이지색 레시피 보드 (카드)
-            card_bg = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
-            pygame.draw.rect(card_bg, (245, 235, 215, 210), (0, 0, card_w, card_h), border_radius=8)
-            screen.blit(card_bg, (cx_, cy_))
-            # 테두리 라인
-            pygame.draw.rect(screen, (200, 180, 150), (cx_, cy_, card_w, card_h), 2, border_radius=8)
+            rr(screen, (24, 30, 62), (cx_, cy_, card_w, card_h), 6)
+            pygame.draw.rect(screen, (55, 48, 115), (cx_, cy_, card_w, card_h), 1, border_radius=6)
 
-            inner_y = cy_ + 6
+            inner_y = cy_ + 4
 
-            # 텍스트 색상 어둡게 조정 (배경이 밝아졌으므로)
-            name_col = (60, 50, 40)
-            name_s = F[14].render(rec["name"], True, name_col)
+            # Completed dish thumbnail next to recipe name
+            name_s = F[14].render(rec["name"], True, C["white"])
             if name_s.get_width() > card_w - 40:
-                name_s = F[12].render(rec["name"], True, name_col)
+                name_s = F[12].render(rec["name"], True, C["white"])
             text_h = name_s.get_height()
 
             dish_thumb = _load_completed_food_img(f"{rec['name']}.png", 32, 32)
             thumb_offset = 0
             if dish_thumb:
+                # Crop transparent padding from the thumbnail for tighter fit
                 mask = pygame.mask.from_surface(dish_thumb)
                 brect = mask.get_bounding_rects()
                 if brect:
@@ -1430,21 +1500,21 @@ class Game:
                     dish_thumb = dish_thumb.subsurface(cr)
                 th = dish_thumb.get_height()
                 tw = dish_thumb.get_width()
+                # Vertically center thumb with text
                 thumb_y = inner_y + text_h // 2 - th // 2
-                screen.blit(dish_thumb, (cx_ + 6, thumb_y))
-                thumb_offset = tw + 6
+                screen.blit(dish_thumb, (cx_ + 4, thumb_y))
+                thumb_offset = tw + 4
 
-            screen.blit(name_s, (cx_ + 6 + thumb_offset, inner_y))
+            screen.blit(name_s, (cx_ + 4 + thumb_offset, inner_y))
 
-            # 점수 색상 (녹색)
-            pts_s = F[12].render(f"+{rec['pts']}", True, (34, 139, 34))
-            screen.blit(pts_s, (cx_ + card_w - pts_s.get_width() - 6, inner_y))
-            inner_y += max(name_s.get_height(), 20) + 4
+            pts_s = F[12].render(f"+{rec['pts']}", True, C["gold"])
+            screen.blit(pts_s, (cx_ + card_w - pts_s.get_width() - 4, inner_y))
+            inner_y += max(name_s.get_height(), 20) + 2
 
-            dot_x = cx_ + 6
+            dot_x = cx_ + 4
             ing_size = 24
             for j, need in enumerate(rec["needs"]):
-                if dot_x + ing_size + 2 > cx_ + card_w - 6:
+                if dot_x + ing_size + 2 > cx_ + card_w - 4:
                     break
                 base = need.replace("_c", "")
                 img = get_img(base, ing_size, ing_size)
@@ -1455,26 +1525,23 @@ class Game:
                     col_dot = ing.get("color", (150, 150, 150))
                     pygame.draw.circle(screen, col_dot, (dot_x + ing_size // 2, inner_y + ing_size // 2), ing_size // 2)
                 dot_x += ing_size + 6
-            inner_y += ing_size + 6
+            inner_y += ing_size + 4
 
-            # 레시피 단계 텍스트 색상 (짙은 갈색)
-            step_col = (100, 90, 80)
             for idx, step in enumerate(rec.get("steps", [])):
                 step_txt = f"{idx + 1}. {step}"
-                step_s = F[11].render(step_txt, True, step_col) if 11 in F \
-                         else F[12].render(step_txt[:22], True, step_col)
-                if step_s.get_width() > card_w - 12:
+                step_s = F[11].render(step_txt, True, (200, 200, 100)) if 11 in F \
+                         else F[12].render(step_txt[:22], True, (200, 200, 100))
+                if step_s.get_width() > card_w - 8:
                     step_txt = f"{idx + 1}. {step[:18]}"
-                    step_s = F[11].render(step_txt, True, step_col) if 11 in F \
-                             else F[12].render(step_txt, True, step_col)
-                screen.blit(step_s, (cx_ + 6, inner_y))
-                inner_y += step_s.get_height() + 2
+                    step_s = F[11].render(step_txt, True, (200, 200, 100)) if 11 in F \
+                             else F[12].render(step_txt, True, (200, 200, 100))
+                screen.blit(step_s, (cx_ + 4, inner_y))
+                inner_y += step_s.get_height() + 1
 
-            # 조리 상태 배지
             badge_lbl = "cook" if rec["cook"] else "raw"
-            badge_col = (200, 80, 20) if rec["cook"] else (40, 140, 40)
+            badge_col = C["orange"] if rec["cook"] else C["lime"]
             bs = F[12].render(badge_lbl, True, badge_col)
-            screen.blit(bs, (cx_ + card_w - bs.get_width() - 6, cy_ + card_h - bs.get_height() - 4))
+            screen.blit(bs, (cx_ + card_w - bs.get_width() - 4, cy_ + card_h - bs.get_height() - 3))
 
     def _draw_hud(self, gw, gh):
         HH = 84
@@ -1532,6 +1599,7 @@ class Game:
         txt(screen, f"{self.score} pts", 40, C["white"], gw // 2, gh // 2 - 20)
         txt(screen, "Click Start to play again", 18, (150, 150, 200), gw // 2, gh // 2 + 40)
         self.btn_start.draw(screen)
+        self._record_frame()
 
     def draw_paused(self):
         self.draw()
@@ -1543,7 +1611,12 @@ class Game:
         self.btn_pause_restart.draw(screen)
         self.btn_pause_home.draw(screen)
         self.btn_pause_settings.draw(screen)
+        rec_label, rec_col = self._record_btn_style()
+        self.btn_pause_record.label = rec_label
+        self.btn_pause_record.base = rec_col
+        self.btn_pause_record.draw(screen)
         self.settings_overlay.draw(screen)
+        self._record_frame()
 
     # ── Multiplayer Methods ───────────────────────────────────────────
 
@@ -1870,655 +1943,9 @@ class Game:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Overcook-style pygame game")
-    parser.add_argument("-test", action="store_true", help="Use test button labels")
-    parser.add_argument("-active", action="store_true", help="Show camera feed instead of action buttons")
-    parser.add_argument("--gesture", action="store_true",
-                        help="Enable gesture recognition input (camera + hand tracking)")
-    parser.add_argument("--flip", dest="flip", action="store_true", default=True,
-                        help="Mirror camera horizontally (default: on)")
-    parser.add_argument("--no-flip", dest="flip", action="store_false",
-                        help="Disable camera mirroring")
-    parser.add_argument("--fast-motion", action="store_true",
-                        help="Fast-motion preset for rapid chop/stir capture")
-    parser.add_argument("--clahe", dest="clahe", action="store_true", default=True,
-                        help="Enable CLAHE brightness normalization (default: on)")
-    parser.add_argument("--no-clahe", dest="clahe", action="store_false",
-                        help="Disable CLAHE brightness normalization")
-    parser.add_argument("--clahe-clip", type=float, default=2.0,
-                        help="CLAHE clip limit (default: 2.0)")
-    parser.add_argument("--clahe-grid", type=int, default=8,
-                        help="CLAHE tile grid size (default: 8)")
-    parser.add_argument("--device", type=int, default=0,
-                        help="Camera device index (default: 0)")
-    parser.add_argument("--multiplayer", action="store_true", default=True,
-                        dest="multiplayer",
-                        help="Enable multiplayer mode (LAN lobby) [default: True]")
-    parser.add_argument("--single", action="store_true",
-                        help="Play in single player mode instead of multiplayer")
-    parser.add_argument("--name", type=str, default="Player",
-                        help="Player name for multiplayer")
-    args = parser.parse_args()
-
-    ui_mode = "normal"
-    if args.test:
-        ui_mode = "test"
-    if args.active or args.gesture:
-        ui_mode = "active"
-
-    # If --single flag is set, use single player mode; otherwise use multiplayer (default)
-    if args.single:
-        _main_single(ui_mode, args)
-    else:
-        _main_multiplayer(ui_mode, args)
-
-
-def _main_single(ui_mode: str, args):
-    """Single player game loop."""
-    game = Game(
-        ui_mode=ui_mode,
-        use_gesture=args.gesture,
-        flip=args.flip,
-        fast_motion=args.fast_motion,
-        clahe=args.clahe,
-        clahe_clip=args.clahe_clip,
-        clahe_grid=args.clahe_grid,
-        device=args.device,
-    )
-    game._start_game_session()
-    held      = {"left": False, "right": False}
-    _gi_frame: dict = {}
-    mpressed     = False
-    _click_this_frame = False  # True if MOUSEDOWN occurred this frame (before gesture step)
-    station_click = None
-    overlay_click = None
-    pipeline_frame = None
-
-    _SLOT_KEYS = {
-        pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3,
-        pygame.K_4: 4, pygame.K_5: 5,
-    }
-
-    while True:
-        dt = min(clock.tick(FPS) / 1000.0, 0.05)
-        _gi_frame = {}
-        station_click = None
-        overlay_click = None
-        pipeline_frame = None
-        _click_this_frame = False  # reset each frame
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                game.shutdown()
-                pygame.quit(); sys.exit()
-            if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = True
-                if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = True
-                if event.key in _SLOT_KEYS and game.state == "play" and game._station_shortcuts_enabled():
-                    _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
-                if event.key in (pygame.K_z, pygame.K_SPACE):
-                    if game.state == "play": _gi_frame["confirm"] = True
-                    elif game.state in ("title", "over"):
-                        game._start_game_session()
-                if event.key == pygame.K_c and game.state == "play": _gi_frame["chop"] = True
-                if event.key == pygame.K_v and game.state == "play": _gi_frame["stir"] = True
-                if event.key == pygame.K_g and game.state == "play": _gi_frame["put_down"] = True
-                if event.key == pygame.K_r:
-                    if game.state == "play":
-                        game.recipe_overlay.active = not game.recipe_overlay.active
-                        game._player_overlays[game.local_player_id] = False
-                        game.audio.play("page_flip")
-                if event.key == pygame.K_RETURN:
-                    if game.state in ("title", "over"):
-                        game._start_game_session()
-                if event.key == pygame.K_ESCAPE:
-                    if game.recipe_overlay.active:
-                        game.recipe_overlay.active = False
-                        game.audio.play("page_flip")
-                    elif game._player_overlays.get(game.local_player_id, False):
-                        # overlay_cancel is propagated through GameInput so the server
-                        # also closes this player's overlay authoritatively
-                        _gi_frame["overlay_cancel"] = True
-                    elif game.state == "play":
-                        game.state = "paused"
-                        game.audio.play("ui_pause")
-                        game.audio.pause_bgm()
-                    elif game.state == "paused":
-                        game.state = "play"
-                        game.audio.play("ui_resume")
-                        game.audio.unpause_bgm()
-                    else:
-                        game.shutdown()
-                        pygame.quit(); sys.exit()
-            if event.type == pygame.KEYUP:
-                if event.key in (pygame.K_LEFT, pygame.K_a): held["left"]  = False
-                if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                mpressed = True
-                _click_this_frame = True
-                click_pos = pygame.mouse.get_pos()
-                if game.settings_overlay.handle_mousedown(click_pos):
-                    pass  # consumed by settings overlay
-                elif game._player_overlays.get(game.local_player_id, False):
-                    overlay_click = click_pos
-                elif game._station_shortcuts_enabled():
-                    station_click = click_pos
-            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                mpressed = False
-                game.settings_overlay.handle_mouseup(event.pos)
-            if event.type == pygame.MOUSEMOTION:
-                game.settings_overlay.handle_mousemove(event.pos)
-
-        mpos = pygame.mouse.get_pos()
-        gi, pipeline_frame = _collect_local_input(
-            game, held, _gi_frame, station_click, overlay_click
-        )
-        game.update(dt, gi, mpos, _click_this_frame or mpressed)
-
-        if game.state == "title":
-            game.shutdown()
-            return  # return to lobby
-        elif game.state == "over": game.draw_over()
-        elif game.state == "paused": game.draw_paused()
-        else: game.draw(pipeline_frame)
-
-        pygame.display.flip()
-
-
-def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) -> tuple:
-    """Collect gesture + keyboard input for the local player. Returns (GameInput, frame)."""
-    pipeline_frame = None
-    gesture_gi = GameInput()
-    if game.use_gesture:
-        hand_inputs, pipeline_frame = game.gesture_step()
-        if hand_inputs:
-            local_overlay = game._player_overlays.get(game.local_player_id, False)
-            # Detect whether ANY hand currently shows thumbs_up (for cooldown logic)
-            any_thumbs_up = any(
-                h.gesture == "thumbs_up" for h in hand_inputs if not h.stale
-            )
-            gesture_gi = hand_inputs_to_game_input(
-                hand_inputs,
-                overlay_active=local_overlay,
-                thumbs_cooldown=game._thumbs_up_held,
-            )
-            # If move is blocked (just exited lock mode), suppress slot movement
-            if game._move_blocked:
-                gesture_gi.move_to_slot = None
-                game._move_blocked = False
-            # Station quick-slot gesture is an amateur-mode-only control.
-            if not game._station_shortcuts_enabled():
-                gesture_gi.move_to_slot = None
-            # Update held state: reset when thumbs_up is no longer seen
-            game._thumbs_up_held = any_thumbs_up
-        else:
-            game._thumbs_up_held = False
-
-    move_dir = 0
-    if held["left"]: move_dir = -1
-    elif held["right"]: move_dir = 1
-
-    keyboard_gi = GameInput(
-        move_dir=move_dir,
-        move_to_slot=_gi_frame.get("move_to_slot"),
-        station_click=station_click,
-        confirm=_gi_frame.get("confirm", False),
-        chop=_gi_frame.get("chop", False),
-        stir=_gi_frame.get("stir", False),
-        put_down=_gi_frame.get("put_down", False),
-        overlay_click=overlay_click,
-        overlay_cancel=_gi_frame.get("overlay_cancel", False),
-    )
-    return merge_inputs(keyboard_gi, gesture_gi), pipeline_frame
-
-
-def _main_multiplayer(ui_mode: str, args):
-    """Multiplayer game loop with lobby."""
-    from .network import GameServer, GameClient, RoomAnnouncer, RoomScanner, get_local_ip
-    from .ui.lobby_ui import LobbyUI
-    from .constants import NET_PORT, NET_TICK_RATE
-
-    lobby_ui = LobbyUI()
-    lobby_state = "lobby_menu"  # lobby_menu, lobby_create, lobby_join, lobby_wait, playing_host, playing_client
-    
-    server = None
-    client = None
-    scanner = None
-    game = None
-    
-    held = {"left": False, "right": False}
-    mpressed = False
-    click_pos = None
-    client_paused = False  # client-side local pause (server continues)
-
-    _SLOT_KEYS = {pygame.K_1: 1, pygame.K_2: 2, pygame.K_3: 3, pygame.K_4: 4, pygame.K_5: 5}
-
-    while True:
-        dt = min(clock.tick(FPS) / 1000.0, 0.05)
-        click_pos = None
-        station_click = None
-        overlay_click = None
-        _gi_frame = {}
-        _click_this_frame = False
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                if server: server.stop()
-                if client: client.close()
-                if scanner: scanner.stop()
-                if game: game.shutdown()
-                pygame.quit()
-                return
-            if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = True
-                if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = True
-                if event.key == pygame.K_ESCAPE:
-                    if lobby_state.startswith("lobby"):
-                        if server: server.stop()
-                        if client: client.close()
-                        if scanner: scanner.stop()
-                        pygame.quit()
-                        return
-                # Game keys (only processed during playing states)
-                if lobby_state.startswith("playing") and game:
-                    if game.state == "play":
-                        if event.key == pygame.K_ESCAPE:
-                            if game._player_overlays.get(getattr(game, "local_player_id", 0), False):
-                                _gi_frame["overlay_cancel"] = True
-                            elif lobby_state == "playing_host":  # M7: only host can pause
-                                game.state = "paused"
-                                game.audio.play("ui_pause")
-                                game.audio.pause_bgm()
-                        if event.key in _SLOT_KEYS and game._station_shortcuts_enabled():
-                            _gi_frame["move_to_slot"] = _SLOT_KEYS[event.key]
-                        if event.key in (pygame.K_z, pygame.K_SPACE):
-                            _gi_frame["confirm"] = True
-                        if event.key == pygame.K_c:
-                            _gi_frame["chop"] = True
-                        if event.key == pygame.K_v:
-                            _gi_frame["stir"] = True
-                    elif game.state == "paused" and event.key == pygame.K_ESCAPE:
-                        if lobby_state == "playing_host":  # M7: resume
-                            game.state = "play"
-                            game.audio.play("ui_resume")
-                            game.audio.unpause_bgm()
-            if event.type == pygame.KEYUP:
-                if event.key in (pygame.K_LEFT, pygame.K_a): held["left"] = False
-                if event.key in (pygame.K_RIGHT, pygame.K_d): held["right"] = False
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                mpressed = True
-                _click_this_frame = True
-                click_pos = pygame.mouse.get_pos()
-                # Route click through settings overlays first
-                if game and game.settings_overlay.handle_mousedown(click_pos):
-                    pass  # consumed by game settings overlay
-                elif not lobby_state.startswith("playing") and lobby_ui.handle_mousedown(click_pos):
-                    pass  # consumed by lobby settings overlay
-                elif game and game._player_overlays.get(getattr(game, 'local_player_id', 0), False):
-                    overlay_click = click_pos
-                elif lobby_state.startswith("playing") and game and game._station_shortcuts_enabled():
-                    station_click = click_pos
-            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                mpressed = False
-                if game: game.settings_overlay.handle_mouseup(event.pos)
-                if not lobby_state.startswith("playing"): lobby_ui.handle_mouseup(event.pos)
-            if event.type == pygame.MOUSEMOTION:
-                if game: game.settings_overlay.handle_mousemove(event.pos)
-                if not lobby_state.startswith("playing"): lobby_ui.handle_mousemove(event.pos)
-
-        mpos = pygame.mouse.get_pos()
-
-        # ── State Machine ─────────────────────────────────────────────
-
-        _btn_pressed = _click_this_frame or mpressed
-
-        if lobby_state == "lobby_menu":
-            action = lobby_ui.update_menu(mpos, _btn_pressed)
-            if action == "create":
-                host_ip = get_local_ip()
-                server = GameServer(host_ip, NET_PORT, room_name=f"{args.name}'s Room")
-                server.start()
-                lobby_state = "lobby_create"
-                lobby_ui.players = [{"id": 0, "name": args.name, "ready": False}]
-                lobby_ui.status_text = f"Listening on {host_ip}:{NET_PORT}"
-            elif action == "join":
-                scanner = RoomScanner()
-                scanner.start()
-                lobby_state = "lobby_join"
-                lobby_ui.rooms = []
-                lobby_ui.selected_room = -1
-            elif action == "single":
-                _main_single(ui_mode, args)
-                mpressed = False  # clear lingering click when returning to lobby
-            lobby_ui.draw_menu()
-
-        elif lobby_state == "lobby_create":
-            action = lobby_ui.update_create(mpos, _btn_pressed)
-            if action == "ready":
-                server.set_host_ready(not server.host_ready)
-            elif action == "start":
-                info = server.get_lobby_info()
-                if info["all_ready"] and info["count"] > 0:
-                    # Collect player names
-                    player_names = {p["id"]: p["name"] for p in info["players"]}
-                    game = Game(
-                        ui_mode=ui_mode,
-                        use_gesture=args.gesture,
-                        flip=args.flip,
-                        fast_motion=args.fast_motion,
-                        clahe=args.clahe,
-                        clahe_clip=args.clahe_clip,
-                        clahe_grid=args.clahe_grid,
-                        device=args.device,
-                        multiplayer=True,
-                        is_server=True,
-                        local_player_id=0,
-                        player_name=args.name,
-                        audio=lobby_ui.audio,
-                    )
-                    game.set_mp_player_names(player_names)
-                    game.reset()
-                    game.state = "play"
-                    game._spawn_order()
-                    game._spawn_order()
-                    game.audio.play("start_whistle")  # L3
-                    game.audio.play_bgm("play_loop")
-                    server.start_game()
-                    lobby_state = "playing_host"
-                    mpressed = False  # prevent lobby click from bleeding into game buttons
-                    continue
-                else:
-                    lobby_ui.status_text = "Not all players ready!"
-            elif action == "back":
-                server.stop()
-                server = None
-                lobby_state = "lobby_menu"
-                continue
-
-            # Update lobby info from server
-            info = server.get_lobby_info()
-            lobby_ui.players = info["players"]
-            lobby_ui.draw_create(f"{server.host}:{server.port}")
-
-        elif lobby_state == "lobby_join":
-            action = lobby_ui.update_join(mpos, _btn_pressed, click_pos=click_pos)
-            if action == "connect":
-                if lobby_ui.selected_room >= 0 and lobby_ui.selected_room < len(lobby_ui.rooms):
-                    room = lobby_ui.rooms[lobby_ui.selected_room]
-                    client = GameClient(room["host"], room["port"], args.name)
-                    if client.connect():
-                        lobby_state = "lobby_wait"
-                        lobby_ui.status_text = f"Connected as Player {client.player_id + 1}"
-                    else:
-                        lobby_ui.status_text = "Connection failed!"
-                        client = None
-            elif action == "back":
-                scanner.stop()
-                scanner = None
-                lobby_state = "lobby_menu"
-                continue
-
-            lobby_ui.rooms = scanner.get_rooms()
-            lobby_ui.draw_join()
-
-        elif lobby_state == "lobby_wait":
-            action = lobby_ui.update_wait(mpos, _btn_pressed)
-            if action == "ready":
-                client.send_ready(True)
-            elif action == "back":
-                client.close()
-                client = None
-                lobby_state = "lobby_menu"
-                continue
-
-            # Check for lobby updates
-            try:
-                msg = client.lobby_queue.get_nowait()
-                lobby_ui.players = msg.get("players", [])
-            except Exception:
-                pass
-
-            # Check for game start
-            try:
-                event_msg = client.event_queue.get_nowait()
-                if event_msg.get("type") == "game_start":
-                    # Collect player names
-                    player_names = {p["id"]: p["name"] for p in lobby_ui.players}
-                    game = Game(
-                        ui_mode=ui_mode,
-                        use_gesture=args.gesture,
-                        flip=args.flip,
-                        fast_motion=args.fast_motion,
-                        clahe=args.clahe,
-                        clahe_clip=args.clahe_clip,
-                        clahe_grid=args.clahe_grid,
-                        device=args.device,
-                        multiplayer=True,
-                        is_server=False,
-                        local_player_id=client.player_id,
-                        player_name=args.name,
-                        audio=lobby_ui.audio,
-                    )
-                    game.set_mp_player_names(player_names)
-                    game.reset()
-                    game.state = "play"
-                    game.audio.play("start_whistle")  # L3
-                    game.audio.play_bgm("play_loop")
-                    lobby_state = "playing_client"
-                    mpressed = False  # prevent lobby click from bleeding into game buttons
-            except Exception:
-                pass
-
-            lobby_ui.draw_wait()
-
-        elif lobby_state == "playing_host":
-            mpos = pygame.mouse.get_pos()
-
-            # H1+H3: handle paused/over states before game logic
-            if game.state != "play":
-                game.update(dt, GameInput(), mpos, _btn_pressed)
-                if game.state == "over":
-                    server.broadcast_game_over(game.score)
-                    server.stop()
-                    game.draw_over()
-                elif game.state == "title":
-                    # Home button pressed — return to lobby
-                    server.stop()
-                    game.shutdown()
-                    game = None
-                    server = None
-                    lobby_state = "lobby_menu"
-                    lobby_ui.audio.play_bgm("intro_bgm")
-                    mpressed = False
-                    pygame.display.flip()
-                    continue
-                elif game.state == "paused":
-                    # Keep guests in sync while host is paused.
-                    server.broadcast_state(game.serialize_state())
-                    game.draw_paused()
-                pygame.display.flip()
-                continue
-
-            # Sync: remove players that disconnected
-            alive_pids = set([0] + server.get_alive_player_ids())
-            for pid in list(game.players.keys()):
-                if pid not in alive_pids:
-                    del game.players[pid]
-                    game._lock_modes.pop(pid, None)
-                    game._player_overlays.pop(pid, None)
-                    game._player_highlights.pop(pid, None)
-                    game._motion_gates_per_player.pop(pid, None)
-
-            # Host: collect inputs + server_tick + broadcast
-            host_gi, pipeline_frame = _collect_local_input(
-                game, held, _gi_frame, station_click, overlay_click
-            )
-
-            # Merge UI button clicks into host input
-            btn_triggered = game.update_ui_buttons(mpos, _btn_pressed)
-            if btn_triggered.get("confirm"): host_gi.confirm = True
-            if btn_triggered.get("chop"):    host_gi.chop    = True
-            if btn_triggered.get("stir"):    host_gi.stir    = True
-            if btn_triggered.get("pause"):
-                game.state = "paused"
-                game.audio.play("ui_pause")
-                game.audio.pause_bgm()
-
-            # Collect client inputs
-            net_inputs = server.collect_inputs()
-            net_inputs[0] = host_gi.to_dict()  # Add host input
-
-            # Server tick
-            server_tick_interval = 1.0 / NET_TICK_RATE
-            game._server_tick_accum += dt
-            
-            ticked = False
-            while game._server_tick_accum >= server_tick_interval:
-                game.server_tick(server_tick_interval, net_inputs)
-                game._server_tick_accum -= server_tick_interval
-                ticked = True
-                # After first tick, keep only continuous inputs (move_dir)
-                # and clear one-shot actions to avoid double-firing
-                for pid in list(net_inputs.keys()):
-                    inp = net_inputs[pid]
-                    if isinstance(inp, dict):
-                        net_inputs[pid] = {"move_dir": inp.get("move_dir", 0)}
-
-            if ticked:
-                server.broadcast_state(game.serialize_state())
-
-            # H1: route to correct draw method
-            if game.state == "over":
-                server.broadcast_game_over(game.score)
-                server.stop()
-                game.draw_over()
-                pygame.display.flip()
-                game.shutdown()
-                return
-            game.draw(pipeline_frame)
-            pygame.display.flip()
-
-        elif lobby_state == "playing_client":
-            mpos = pygame.mouse.get_pos()
-
-            # If host/server is gone, exit cleanly back to lobby instead of hanging.
-            if not client or not client.connected:
-                if client:
-                    client.close()
-                if game:
-                    game.shutdown()
-                game = None
-                client = None
-                client_paused = False
-                lobby_state = "lobby_menu"
-                lobby_ui.status_text = "Disconnected from host"
-                lobby_ui.audio.play_bgm("intro_bgm")
-                mpressed = False
-                pygame.display.flip()
-                continue
-
-            # H1+H3: handle paused/over states without sending input to server
-            if game.state == "over":
-                game.draw_over()
-                pygame.display.flip()
-                client.close()
-                game.shutdown()
-                return
-
-            # Local pause: client-side pause (server continues running)
-            if client_paused:
-                # Receive server state but preserve local pause
-                try:
-                    state = client.state_queue.get_nowait()
-                    saved_state = game.state
-                    game.apply_state(state)
-                    if game.state != "over":
-                        game.state = saved_state
-                except Exception:
-                    pass
-                try:
-                    event_msg = client.event_queue.get_nowait()
-                    if event_msg.get("type") == "game_over":
-                        game.state = "over"
-                        game.score = event_msg.get("score", game.score)
-                        client_paused = False
-                except Exception:
-                    pass
-                if game.state == "over":
-                    game.draw_over()
-                    pygame.display.flip()
-                    client.close()
-                    game.shutdown()
-                    return
-                game.update(dt, GameInput(), mpos, _btn_pressed)
-                if game.state == "play":
-                    client_paused = False
-                    game.audio.play("ui_resume")
-                    game.audio.unpause_bgm()
-                elif game.state == "title":
-                    # Home button pressed — return to lobby
-                    client.close()
-                    game.shutdown()
-                    game = None
-                    client = None
-                    client_paused = False
-                    lobby_state = "lobby_menu"
-                    lobby_ui.audio.play_bgm("intro_bgm")
-                    mpressed = False
-                    pygame.display.flip()
-                    continue
-                else:
-                    game.state = "paused"
-                game.draw_paused()
-                pygame.display.flip()
-                continue
-
-            # Client: send local input + receive state + render
-            local_gi, pipeline_frame = _collect_local_input(
-                game, held, _gi_frame, station_click, overlay_click
-            )
-
-            # Merge UI button clicks into local input
-            btn_triggered = game.update_ui_buttons(mpos, _btn_pressed)
-            if btn_triggered.get("confirm"): local_gi.confirm = True
-            if btn_triggered.get("chop"):    local_gi.chop    = True
-            if btn_triggered.get("stir"):    local_gi.stir    = True
-            if btn_triggered.get("pause") and game.state == "play":
-                client_paused = True
-                game.state = "paused"
-                game.audio.play("ui_pause")
-                game.audio.pause_bgm()
-
-            # Send input to server (skip when locally paused)
-            if not client_paused:
-                client.send_input(local_gi.to_dict())
-
-            # Receive state from server
-            try:
-                state = client.state_queue.get_nowait()
-                game.apply_state(state)
-            except Exception:
-                pass
-
-            # Check for game over
-            try:
-                event_msg = client.event_queue.get_nowait()
-                if event_msg.get("type") == "game_over":
-                    game.state = "over"
-                    game.score = event_msg.get("score", game.score)
-            except Exception:
-                pass
-
-            # H1: route to correct draw method
-            if game.state == "paused":
-                game.draw_paused()
-            else:
-                game.draw(pipeline_frame)
-            pygame.display.flip()
-
-        # For lobby states that don't call flip internally
-        if not lobby_state.startswith("playing"):
-            pygame.display.flip()
+    # Import here to avoid circular import: runloop depends on Game symbols.
+    from .runloop import main as _runloop_main
+    _runloop_main()
 
 
 if __name__ == "__main__":

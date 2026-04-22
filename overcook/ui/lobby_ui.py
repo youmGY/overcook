@@ -10,7 +10,7 @@ States:
 
 import os
 import pygame
-from ..engine import screen
+from ..engine import screen, F
 from ..constants import C, NET_PORT, PLAYER_COLORS
 from ..utils import rr, txt
 from ..audio import AudioManager
@@ -40,6 +40,26 @@ class LobbyUI:
         self.bg_img = None
         self.bg_img_scaled = None
         self._load_background()
+
+        # Gesture & camera visualization
+        self.use_gesture = False
+        self.hand_img = None
+        self.hand_img_scaled = None
+        self._last_hand_img_size = (0, 0)
+        self._load_hand_image()
+        
+        # Gesture state for lobby hover tracking
+        self.hovered_button = None
+        self._thumbs_up_time = 0.0
+        self._thumbs_up_duration = 0.55  # Hold time to avoid accidental clicks
+        self._thumbs_cooldown = 0.0      # Cooldown after click
+        self._hover_lock_time = 0.0      # Time stayed on same button
+        self._hover_lock_duration = 0.18 # Require short stable hover before click
+        self._last_hovered_button = None
+        self._cursor_pos = None          # Smoothed cursor position in screen coords
+        self._cursor_alpha = 0.28        # Lower value = less sensitive movement
+        self.last_hand_inputs = None  # Store hand inputs for drawing
+        self.last_pipeline_frame = None  # Store camera frame for display
 
     def _maybe_rebuild(self):
         """Rebuild buttons if screen size changed."""
@@ -88,6 +108,20 @@ class LobbyUI:
             print(f"Error loading background image: {e}")
             self.bg_img = None
 
+    def _load_hand_image(self):
+        """Load the hand.png image for gesture visualization."""
+        try:
+            root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            hand_path = os.path.join(root, "assets", "images", "hand.png")
+            if os.path.exists(hand_path):
+                self.hand_img = pygame.image.load(hand_path).convert_alpha()
+            else:
+                print(f"Warning: hand.png not found at {hand_path}")
+                self.hand_img = None
+        except Exception as e:
+            print(f"Error loading hand image: {e}")
+            self.hand_img = None
+
     def _get_scaled_background(self):
         """Get background image scaled to current screen size."""
         if not self.bg_img:
@@ -97,6 +131,15 @@ class LobbyUI:
             self.bg_img_scaled = pygame.transform.scale(self.bg_img, sz)
             self._last_bg_size = sz
         return self.bg_img_scaled
+
+    def _get_scaled_hand(self, target_w: int, target_h: int):
+        """Get hand image scaled to target size."""
+        if not self.hand_img:
+            return None
+        if self.hand_img_scaled is None or self._last_hand_img_size != (target_w, target_h):
+            self.hand_img_scaled = pygame.transform.scale(self.hand_img, (target_w, target_h))
+            self._last_hand_img_size = (target_w, target_h)
+        return self.hand_img_scaled
 
     # ── mouse event forwarding ─────────────────────────────────────────
 
@@ -109,6 +152,64 @@ class LobbyUI:
 
     def handle_mousemove(self, mpos):
         self.settings_overlay.handle_mousemove(mpos)
+
+    def _draw_hand_visualization(self, hand_inputs):
+        """Draw moving hand.png that follows the gesture pointer."""
+        if not hand_inputs or not self.hand_img:
+            return
+
+        gw, gh = screen.get_size()
+        hand_size = 96
+        hand_img_scaled = self._get_scaled_hand(hand_size, hand_size)
+        if not hand_img_scaled:
+            return
+
+        # Move the hand image with the smoothed pointer position.
+        if self._cursor_pos is None:
+            return
+
+        cx, cy = self._cursor_pos
+        hand_x = int(cx - hand_size * 0.35)
+        hand_y = int(cy - hand_size * 0.25)
+        hand_x = max(0, min(gw - hand_size, hand_x))
+        hand_y = max(0, min(gh - hand_size, hand_y))
+        screen.blit(hand_img_scaled, (hand_x, hand_y))
+
+    def _draw_camera_feed(self):
+        """Draw camera feed at bottom-right corner of screen."""
+        if self.last_pipeline_frame is None:
+            return
+        
+        gw, gh = screen.get_size()
+        
+        # Camera panel dimensions (bottom-right)
+        cam_w, cam_h = 200, 150
+        cam_x = gw - cam_w - 10
+        cam_y = gh - cam_h - 10
+        
+        # Draw background panel
+        pygame.draw.rect(screen, (30, 30, 50), (cam_x - 2, cam_y - 2, cam_w + 4, cam_h + 4))
+        pygame.draw.rect(screen, (80, 90, 120), (cam_x - 2, cam_y - 2, cam_w + 4, cam_h + 4), 2)
+        
+        try:
+            # last_pipeline_frame is BGR; convert to RGB and mirror for selfie view.
+            frame = self.last_pipeline_frame[:, :, ::-1]
+            frame = frame[:, ::-1, :]
+
+            src_h, src_w = frame.shape[:2]
+            scale = min(cam_w / float(src_w), cam_h / float(src_h))
+            new_w = max(1, int(src_w * scale))
+            new_h = max(1, int(src_h * scale))
+
+            offset_x = (cam_w - new_w) // 2
+            offset_y = (cam_h - new_h) // 2
+
+            frame_swapped = frame.swapaxes(0, 1)
+            surf = pygame.surfarray.make_surface(frame_swapped)
+            surf = pygame.transform.smoothscale(surf, (new_w, new_h))
+            screen.blit(surf, (cam_x + offset_x, cam_y + offset_y))
+        except Exception:
+            pass
 
     # ── drawing ───────────────────────────────────────────────────────
 
@@ -128,6 +229,12 @@ class LobbyUI:
         self.btn_solo.draw(screen)
         self.btn_settings.draw(screen)
         self.settings_overlay.draw(screen)
+        
+        # Draw camera feed and hand visualization
+        if self.last_pipeline_frame is not None:
+            self._draw_camera_feed()
+        if self.last_hand_inputs:
+            self._draw_hand_visualization(self.last_hand_inputs)
 
     def draw_create(self, host_ip: str):
         self._maybe_rebuild()
@@ -146,6 +253,12 @@ class LobbyUI:
 
         if self.status_text:
             txt(screen, self.status_text, 18, C["orange"], gw // 2, gh - 145)
+        
+        # Draw camera feed and hand visualization
+        if self.last_pipeline_frame is not None:
+            self._draw_camera_feed()
+        if self.last_hand_inputs:
+            self._draw_hand_visualization(self.last_hand_inputs)
 
     def draw_join(self):
         self._maybe_rebuild()
@@ -176,6 +289,12 @@ class LobbyUI:
         self.btn_back.draw(screen)
         self.btn_settings.draw(screen)
         self.settings_overlay.draw(screen)
+        
+        # Draw camera feed and hand visualization
+        if self.last_pipeline_frame is not None:
+            self._draw_camera_feed()
+        if self.last_hand_inputs:
+            self._draw_hand_visualization(self.last_hand_inputs)
 
     def draw_wait(self):
         self._maybe_rebuild()
@@ -192,6 +311,12 @@ class LobbyUI:
 
         if self.status_text:
             txt(screen, self.status_text, 18, C["orange"], gw // 2, gh - 145)
+        
+        # Draw camera feed and hand visualization
+        if self.last_pipeline_frame is not None:
+            self._draw_camera_feed()
+        if self.last_hand_inputs:
+            self._draw_hand_visualization(self.last_hand_inputs)
 
     def _draw_player_list(self, gw, gh):
         y = 100
@@ -211,9 +336,116 @@ class LobbyUI:
 
     # ── update (returns action string) ────────────────────────────────
 
-    def update_menu(self, mpos, mpressed) -> str:
+    def _update_gesture_hover(self, hand_inputs):
+        """Update button hover based on gesture hand position. Returns True if thumbs_up click detected."""
+        self.hovered_button = None
+
+        if not hand_inputs:
+            self._thumbs_up_time = 0.0
+            self._hover_lock_time = 0.0
+            self._last_hovered_button = None
+            return False
+
+        dt = 1.0 / 30.0
+        if self._thumbs_cooldown > 0.0:
+            self._thumbs_cooldown = max(0.0, self._thumbs_cooldown - dt)
+
+        # Pick first active hand.
+        hand = None
+        for h in hand_inputs:
+            if not h.stale:
+                hand = h
+                break
+
+        if not hand or hand.position is None:
+            self._thumbs_up_time = 0.0
+            self._hover_lock_time = 0.0
+            self._last_hovered_button = None
+            return False
+
+        gw, gh = screen.get_size()
+        raw_x = float(hand.position[0]) * gw
+        raw_y = float(hand.position[1]) * gh
+
+        # Smooth cursor to reduce sensitivity and jitter.
+        if self._cursor_pos is None:
+            self._cursor_pos = (raw_x, raw_y)
+        else:
+            px, py = self._cursor_pos
+            a = self._cursor_alpha
+            self._cursor_pos = (px + (raw_x - px) * a, py + (raw_y - py) * a)
+
+        pos_x = int(self._cursor_pos[0])
+        pos_y = int(self._cursor_pos[1])
+
+        # Check which button is being pointed at
+        all_buttons = [
+            self.btn_create, self.btn_join, self.btn_solo, self.btn_settings,
+            self.btn_ready, self.btn_start, self.btn_back, self.btn_connect
+        ]
+
+        hovered = None
+        for btn in all_buttons:
+            if not btn:
+                continue
+            # Add hit margin so aiming is easier.
+            hit = btn.rect.inflate(24, 16)
+            if hit.collidepoint(pos_x, pos_y):
+                hovered = btn
+                break
+
+        self.hovered_button = hovered
+        if hovered is None:
+            self._thumbs_up_time = 0.0
+            self._hover_lock_time = 0.0
+            self._last_hovered_button = None
+            return False
+
+        # Require the pointer to stay on the same button briefly.
+        if hovered is self._last_hovered_button:
+            self._hover_lock_time += dt
+        else:
+            self._hover_lock_time = 0.0
+            self._last_hovered_button = hovered
+            self._thumbs_up_time = 0.0
+
+        # Thumbs up click: either debounced confirmation pulse or hold gesture.
+        thumbs_pulse = bool(getattr(hand, "gesture_confirmed", False) and hand.gesture == "thumbs_up")
+        if self._hover_lock_time >= self._hover_lock_duration and thumbs_pulse and self._thumbs_cooldown <= 0.0:
+            self._thumbs_up_time = 0.0
+            self._thumbs_cooldown = 0.45
+            return True
+
+        if hand.gesture == "thumbs_up" and self._hover_lock_time >= self._hover_lock_duration:
+            self._thumbs_up_time += dt
+            if self._thumbs_up_time >= self._thumbs_up_duration and self._thumbs_cooldown <= 0.0:
+                self._thumbs_up_time = 0.0
+                self._thumbs_cooldown = 0.45
+                return True
+        else:
+            self._thumbs_up_time = 0.0
+
+        return False
+
+    def update_menu(self, mpos, mpressed, hand_inputs=None) -> str:
         if self.settings_overlay.active:
             return ""
+        
+        # Handle gesture input
+        if hand_inputs:
+            if self._update_gesture_hover(hand_inputs):
+                if self.hovered_button == self.btn_create:
+                    return "create"
+                elif self.hovered_button == self.btn_join:
+                    return "join"
+                elif self.hovered_button == self.btn_solo:
+                    return "single"
+                elif self.hovered_button == self.btn_settings:
+                    self.settings_overlay.active = True
+        else:
+            self._thumbs_up_time = 0.0
+        
+        # Handle mouse input
         if self.btn_settings.update(mpos, mpressed):
             self.settings_overlay.active = True
             return ""
@@ -225,9 +457,25 @@ class LobbyUI:
             return "single"
         return ""
 
-    def update_create(self, mpos, mpressed) -> str:
+    def update_create(self, mpos, mpressed, hand_inputs=None) -> str:
         if self.settings_overlay.active:
             return ""
+        
+        # Handle gesture input
+        if hand_inputs:
+            if self._update_gesture_hover(hand_inputs):
+                if self.hovered_button == self.btn_ready:
+                    return "ready"
+                elif self.hovered_button == self.btn_start:
+                    return "start"
+                elif self.hovered_button == self.btn_back:
+                    return "back"
+                elif self.hovered_button == self.btn_settings:
+                    self.settings_overlay.active = True
+        else:
+            self._thumbs_up_time = 0.0
+        
+        # Handle mouse input
         if self.btn_settings.update(mpos, mpressed):
             self.settings_overlay.active = True
             return ""
@@ -239,9 +487,23 @@ class LobbyUI:
             return "back"
         return ""
 
-    def update_join(self, mpos, mpressed, click_pos=None) -> str:
+    def update_join(self, mpos, mpressed, hand_inputs=None, click_pos=None) -> str:
         if self.settings_overlay.active:
             return ""
+        
+        # Handle gesture input
+        if hand_inputs:
+            if self._update_gesture_hover(hand_inputs):
+                if self.hovered_button == self.btn_connect:
+                    return "connect"
+                elif self.hovered_button == self.btn_back:
+                    return "back"
+                elif self.hovered_button == self.btn_settings:
+                    self.settings_overlay.active = True
+        else:
+            self._thumbs_up_time = 0.0
+        
+        # Handle mouse input
         if self.btn_settings.update(mpos, mpressed):
             self.settings_overlay.active = True
             return ""
@@ -260,9 +522,23 @@ class LobbyUI:
             return "back"
         return ""
 
-    def update_wait(self, mpos, mpressed) -> str:
+    def update_wait(self, mpos, mpressed, hand_inputs=None) -> str:
         if self.settings_overlay.active:
             return ""
+        
+        # Handle gesture input
+        if hand_inputs:
+            if self._update_gesture_hover(hand_inputs):
+                if self.hovered_button == self.btn_ready:
+                    return "ready"
+                elif self.hovered_button == self.btn_back:
+                    return "back"
+                elif self.hovered_button == self.btn_settings:
+                    self.settings_overlay.active = True
+        else:
+            self._thumbs_up_time = 0.0
+        
+        # Handle mouse input
         if self.btn_settings.update(mpos, mpressed):
             self.settings_overlay.active = True
             return ""
