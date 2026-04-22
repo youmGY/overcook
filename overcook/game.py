@@ -220,6 +220,7 @@ class Game:
         self._record_path: Optional[str] = None
         self._record_fps: int = 30
         self._recordings_dir = os.path.join(_ROOT, "recordings")
+        self._record_stop_after_over_draws: int = -1
 
         if self.use_gesture:
             self._init_pipeline(
@@ -371,6 +372,7 @@ class Game:
         self._record_path = os.path.join(self._recordings_dir, f"overcook_{stamp}.mp4")
         self._record_writer = None
         self._recording_active = True
+        self._record_stop_after_over_draws = -1
         self._pop(self.gw // 2, 70, "Recording started", C["gold"])
 
     def _stop_recording(self, _reason: str = ""):
@@ -383,8 +385,14 @@ class Game:
             was_active = self._recording_active
             self._record_writer = None
             self._recording_active = False
+            self._record_stop_after_over_draws = -1
             if was_active and self._record_path:
                 self._pop(self.gw // 2, 70, f"Saved: {os.path.basename(self._record_path)}", C["lime"])
+
+    def _arm_record_stop_on_game_over(self):
+        """Stop recording after the game-over screen is rendered at least once."""
+        if self._recording_active and self._record_stop_after_over_draws < 0:
+            self._record_stop_after_over_draws = 1
 
     def _record_frame(self):
         if not self._recording_active or cv2 is None:
@@ -1361,7 +1369,7 @@ class Game:
 
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
-            self._stop_recording("game_over")
+            self._arm_record_stop_on_game_over()
             self.state = "over"
             if self.score > 0:
                 self.audio.play("fanfare_win")
@@ -1600,6 +1608,10 @@ class Game:
         txt(screen, "Click Start to play again", 18, (150, 150, 200), gw // 2, gh // 2 + 40)
         self.btn_start.draw(screen)
         self._record_frame()
+        if self._record_stop_after_over_draws >= 0:
+            self._record_stop_after_over_draws -= 1
+            if self._record_stop_after_over_draws <= 0:
+                self._stop_recording("game_over_postscreen")
 
     def draw_paused(self):
         self.draw()
@@ -1815,6 +1827,7 @@ class Game:
         # Timer
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
+            self._arm_record_stop_on_game_over()
             self.state = "over"
             # M2: play win/lose fanfare and result BGM
             if self.score >= 100:
