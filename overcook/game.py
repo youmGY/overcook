@@ -1666,6 +1666,10 @@ class Game:
                 self._lock_mode = None
                 self._locked_station = None
                 self._motion_gate_ready["chop"] = False
+                self._thumbs_up_held = True
+                self._move_blocked = True
+                if self._pipeline:
+                    self._pipeline.reset_motion()
             elif self._lock_mode == "stir" and st and (
                 st.pot_cooked
                 or st.pot_burned
@@ -1674,6 +1678,10 @@ class Game:
                 self._lock_mode = None
                 self._locked_station = None
                 self._motion_gate_ready["stir"] = False
+                self._thumbs_up_held = True
+                self._move_blocked = True
+                if self._pipeline:
+                    self._pipeline.reset_motion()
 
             # Fix H4: always run player physics so gravity/grounding work while locked
             self.player.update(0, dt, gw, self._gy())
@@ -1696,7 +1704,10 @@ class Game:
             self.player.update(move_dir, dt, gw, self._gy())
 
             handled = False
-            if gi.chop:
+            if gi.confirm or gi.action:
+                self.do_action()
+                handled = True
+            if gi.chop and not handled:
                 st = self._near()
                 if st and st.kind == "chop":
                     self._act_chop(st, chop_action=True)
@@ -1706,8 +1717,6 @@ class Game:
                 if st and st.kind == "pot":
                     self._act_pot(st, stir_only=True)
                     handled = True
-            if (gi.confirm or gi.action) and not handled:
-                self.do_action()
 
     def server_tick(self, dt: float, all_inputs: dict):
         """Server: process one game tick with inputs from all players."""
