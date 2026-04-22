@@ -10,9 +10,9 @@
 
 import os
 import pygame
-import sys
 import random
 import logging
+import time
 from typing import Optional
 
 try:
@@ -20,11 +20,11 @@ try:
 except Exception:
     cv2 = None
 
-from .engine import screen, clock, FPS, F
+from .engine import screen, F
 from .constants import (
     C, INGS, ING_KEYS, RECIPES,
     BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS,
-    OVER_STIR_THRESHOLD, WRONG_SUBMIT_PENALTY, INTERACTION_RANGE,
+    OVER_STIR_THRESHOLD, WRONG_SUBMIT_PENALTY, BURN_SUBMIT_PENALTY, INTERACTION_RANGE,
 )
 from .ui import Popup, Btn, RecipeOverlay, IngredientOverlay, SettingsOverlay
 from .entities import Station, Player, Order
@@ -99,6 +99,14 @@ class Game(GameDrawMixin):
         self._move_blocked: bool = False
         self._game_bg_img = None
         self._load_game_bg()
+
+        # Pause-screen recording state
+        self._recording_active: bool = False
+        self._record_writer = None
+        self._record_path: Optional[str] = None
+        self._record_fps: int = 30
+        self._recordings_dir = os.path.join(_ROOT, "recordings")
+        self._record_stop_after_over_draws: int = -1
 
         if self.use_gesture:
             self._init_pipeline(
@@ -195,7 +203,7 @@ class Game(GameDrawMixin):
             from .recognition.interface import RecognitionPipeline
 
             fps = 60 if fast_motion else 30
-            max_hands = 1
+            max_hands = 1 if fast_motion else 2
             min_det = 0.15 if fast_motion else 0.2
             min_track = 0.1
             self._pipeline = RecognitionPipeline(
@@ -227,12 +235,73 @@ class Game(GameDrawMixin):
         return hands, frame
 
     def shutdown(self):
+        self._stop_recording("shutdown")
         if self._pipeline:
             self._pipeline.close()
             self._pipeline = None
         if self._camera:
             self._camera.release()
             self._camera = None
+
+    def _record_btn_style(self) -> tuple[str, tuple[int, int, int]]:
+        if self._recording_active:
+            return "Stop Rec", (155, 45, 45)
+        return "Record", (150, 35, 35)
+
+    def _start_recording(self):
+        if self._recording_active:
+            return
+        if cv2 is None:
+            self._pop(self.gw // 2, 70, "OpenCV unavailable: cannot record", C["red"])
+            return
+        os.makedirs(self._recordings_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        self._record_path = os.path.join(self._recordings_dir, f"overcook_{stamp}.mp4")
+        self._record_writer = None
+        self._recording_active = True
+        self._record_stop_after_over_draws = -1
+        self._pop(self.gw // 2, 70, "Recording started", C["gold"])
+
+    def _stop_recording(self, _reason: str = ""):
+        if not self._recording_active and self._record_writer is None:
+            return
+        try:
+            if self._record_writer is not None:
+                self._record_writer.release()
+        finally:
+            was_active = self._recording_active
+            self._record_writer = None
+            self._recording_active = False
+            self._record_stop_after_over_draws = -1
+            if was_active and self._record_path:
+                self._pop(self.gw // 2, 70, f"Saved: {os.path.basename(self._record_path)}", C["lime"])
+
+    def _arm_record_stop_on_game_over(self):
+        """Stop recording after the game-over screen is rendered at least once."""
+        if self._recording_active and self._record_stop_after_over_draws < 0:
+            self._record_stop_after_over_draws = 1
+
+    def _record_frame(self):
+        if not self._recording_active or cv2 is None:
+            return
+        try:
+            frame_rgb = pygame.surfarray.array3d(screen)
+            frame_rgb = frame_rgb.swapaxes(0, 1)
+            frame_bgr = frame_rgb[:, :, ::-1]
+            h, w = frame_bgr.shape[:2]
+
+            if self._record_writer is None:
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                self._record_writer = cv2.VideoWriter(self._record_path, fourcc, self._record_fps, (w, h))
+                if not self._record_writer or not self._record_writer.isOpened():
+                    self._record_writer = None
+                    self._recording_active = False
+                    self._pop(self.gw // 2, 70, "Failed to start recorder", C["red"])
+                    return
+
+            self._record_writer.write(frame_bgr)
+        except Exception:
+            self._stop_recording("record_error")
 
     def reset(self):
         log.info("--- GAME RESET ---")
@@ -354,24 +423,13 @@ class Game(GameDrawMixin):
 
     def _recipe_panel_rect(self):
         gw, gh = screen.get_size()
-        HUD_H = 44 # 상단 HUD(점수/타이머)의 높이
+        HUD_H = 44
         gy = self._gy()
         station_top = gy - Station.SH - int(self.station_row_offset) - 40
-        
-        # 📌 1. 좌우 여백 조절 (숫자를 키우면 화면 안쪽으로 더 들어옵니다)
-        pad = 8 
-        
-        # 📌 2. Y축(세로) 시작 위치 조절 (더 밑으로 내리고 싶다면 패딩을 더하세요. 예: HUD_H + pad + 20)
-        start_y = HUD_H + pad + 45
-
+        pad = 8
         full_h = max(70, station_top - HUD_H - pad * 2)
-        
-        # 📌 3. 전체 영역의 높이 조절 (0.82 비율을 1.0으로 하면 위아래로 더 길어집니다)
-        reduced_h = int(full_h * 0.6) 
-        
-        # (시작X, 시작Y, 가로길이, 세로길이) 순서입니다.
-        # 화면 좌우 너비를 좁히고 싶다면 gw - pad * 2 부분에서 추가로 값을 빼주면 됩니다.
-        return (pad, start_y, gw - pad * 2, reduced_h)
+        reduced_h = int(full_h * 0.82)
+        return (pad, HUD_H + pad, gw - pad * 2, reduced_h)
 
     def _camera_rect_from_controls(self):
         return getattr(self, "_cam_slot_rect", None)
@@ -439,6 +497,8 @@ class Game(GameDrawMixin):
         self.btn_pause_restart   = Btn(_bx + (_bw + _gap),         _by, _bw, _bh, "Restart",  (120, 50, 50))
         self.btn_pause_home      = Btn(_bx + (_bw + _gap) * 2,     _by, _bw, _bh, "Home",     (80, 60, 120))
         self.btn_pause_settings  = Btn(_bx + (_bw + _gap) * 3,     _by, _bw, _bh, "Settings", (55, 55, 110))
+        rec_label, rec_col = self._record_btn_style()
+        self.btn_pause_record    = Btn(gw // 2 - 90, _by + _bh + 12, 180, 46, rec_label, rec_col)
 
     def _near(self):
         px, py = self.player.center()
@@ -726,7 +786,7 @@ class Game(GameDrawMixin):
 
         if matched:
             if dish.get("burned"):
-                penalty = matched.recipe["pts"] // 2
+                penalty = BURN_SUBMIT_PENALTY
                 self.score = max(0, self.score - penalty)
                 matched.status = "done"
                 self._clear_submit_source(from_holding)
@@ -816,51 +876,67 @@ class Game(GameDrawMixin):
         self.audio.play("order_bell")
 
     def _hint(self):
+        def _apply_hint_visibility(msg: str) -> str:
+            # Keep advanced mode clean by hiding beginner instructional prompts.
+            if not self.settings_overlay.amateur_mode:
+                beginner_tokens = (
+                    "Action:",
+                    "Press Chop",
+                    "Press Stir",
+                    "Chop button:",
+                    "Stir button:",
+                    # "Stir to start",
+                    # "Chop it first",
+                )
+                if any(tok in msg for tok in beginner_tokens):
+                    return ""
+            return msg
+
         if self._lock_mode == "chop" and self._locked_station:
             st = self._locked_station
-            return f"Chopping! Press Chop ({st.chop_hits}/{CHOP_ACTIONS})"
+            return _apply_hint_visibility(f"Chopping! Press Chop ({st.chop_hits}/{CHOP_ACTIONS})")
         if self._lock_mode == "stir" and self._locked_station:
             st = self._locked_station
-            return f"Stirring! Press Stir ({st.pot_stirs}/{STIR_ACTIONS})"
+            return _apply_hint_visibility(f"Stirring! Press Stir ({st.pot_stirs}/{STIR_ACTIONS})")
         # 로컬 플레이어의 overlay 상태 확인
         local_overlay_active = self._player_overlays.get(self.local_player_id, False)
         if local_overlay_active: 
-            return "Click an ingredient card  |  ESC to cancel"
+            return _apply_hint_visibility("Click an ingredient card  |  ESC to cancel")
         st = self._near()
-        if not st: return ""
+        if not st: return _apply_hint_visibility("")
         h = self.player.holding
         k = st.kind
         if k == "ing":
-            return "Action: Open pantry" if not h else "Action: Drop item first"
+            return _apply_hint_visibility("Action: Open pantry" if not h else "Action: Drop item first")
         if k == "chop":
             if h and not h.get("chopped") and INGS.get(h.get("id", "").replace("_c", ""), {}).get("can_chop"):
-                return "Action: Place on board  |  Chop!: Start chopping"
+                return _apply_hint_visibility("Action: Place on board  |  Chop!: Start chopping")
             if not h and st.chop_item and st.chop_item.get("chopped"):
-                return "Action: Pick chopped item"
+                return _apply_hint_visibility("Action: Pick chopped item")
             if not h and st.chop_item:
-                return f"Chop button: {st.chop_hits}/{CHOP_ACTIONS}"
+                return _apply_hint_visibility(f"Chop button: {st.chop_hits}/{CHOP_ACTIONS}")
         if k == "pot":
             burned = st.pot_burned
-            if burned: return "Action: Pick up burned dish (trash to discard)"
+            if burned: return _apply_hint_visibility("Action: Pick up burned dish (trash to discard)")
             if h and not st.pot_cooked:
                 base = h.get("id", "").replace("_c", "")
                 if INGS.get(base, {}).get("can_chop") and not h.get("chopped"):
-                    return "Chop it first before adding to pot!"
-                return "Action: Add to pot"
+                    return _apply_hint_visibility("Chop it first before adding to pot!")
+                return _apply_hint_visibility("Action: Add to pot")
             if not h and st.pot_items and not st.pot_cooking and not st.pot_cooked:
-                return f"Stir to start cooking! (max {OVER_STIR_THRESHOLD - 1} stirs)"
-            if not h and st.pot_cooked: return "Action: Pick cooked dish"
-            if not h and st.pot_cooking: return f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {OVER_STIR_THRESHOLD})"
+                return _apply_hint_visibility(f"Stir to start cooking! (max {OVER_STIR_THRESHOLD - 1} stirs)")
+            if not h and st.pot_cooked: return _apply_hint_visibility("Action: Pick cooked dish")
+            if not h and st.pot_cooking: return _apply_hint_visibility(f"Stir button: {st.pot_stirs}/{STIR_ACTIONS} (burn at {OVER_STIR_THRESHOLD})")
         if k == "submit":
             if h and h.get("cooked"):
-                if h.get("burned"): return "Action: Submit burned dish (penalty!)"
-                return "Action: Submit dish!"
+                if h.get("burned"): return _apply_hint_visibility("Action: Submit burned dish (penalty!)")
+                return _apply_hint_visibility("Action: Submit dish!")
             dish, _ = self._find_submit_dish()
-            return "Action: Submit dish!" if dish else "Action: Nothing to submit"
+            return _apply_hint_visibility("Action: Submit dish!" if dish else "Action: Nothing to submit")
         if k == "trash":
-            if h: return "Action: Trash item"
-            return "Action: Clear chop boards"
-        return ""
+            if h: return _apply_hint_visibility("Action: Trash item")
+            return _apply_hint_visibility("Action: Clear chop boards")
+        return _apply_hint_visibility("")
 
     def update_ui_buttons(self, mpos, mpressed) -> dict:
         """Poll all action buttons and return a dict of triggered actions.
@@ -910,15 +986,26 @@ class Game(GameDrawMixin):
                 self.audio.play("ui_resume")
                 self.audio.unpause_bgm()
             if self.btn_pause_restart.update(mpos, mpressed):
+                self._stop_recording("restart")
                 self._start_game_session()
                 self.audio.play("ui_click")
             if self.btn_pause_home.update(mpos, mpressed):
+                self._stop_recording("home")
                 self.audio.stop_bgm()
                 self.audio.play_bgm("intro_bgm")
                 self.state = "title"
                 self.audio.play("ui_click")
             if self.btn_pause_settings.update(mpos, mpressed):
                 self.settings_overlay.active = True
+                self.audio.play("ui_click")
+            if self.btn_pause_record.update(mpos, mpressed):
+                if self._recording_active:
+                    self._stop_recording("manual")
+                else:
+                    self._start_recording()
+                rec_label, rec_col = self._record_btn_style()
+                self.btn_pause_record.label = rec_label
+                self.btn_pause_record.base = rec_col
                 self.audio.play("ui_click")
             return
 
@@ -1021,6 +1108,7 @@ class Game(GameDrawMixin):
 
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
+            self._arm_record_stop_on_game_over()
             self.state = "over"
             if self.score > 0:
                 self.audio.play("fanfare_win")
@@ -1276,6 +1364,7 @@ class Game(GameDrawMixin):
         # Timer
         self.timer = max(0.0, self.timer - dt)
         if self.timer <= 0:
+            self._arm_record_stop_on_game_over()
             self.state = "over"
             # M2: play win/lose fanfare and result BGM
             if self.score >= 100:

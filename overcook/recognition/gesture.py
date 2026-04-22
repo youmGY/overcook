@@ -24,12 +24,14 @@ LABEL_FINGER_4 = "finger_4"
 LABEL_FINGER_5 = "finger_5"
 LABEL_THUMBS_UP = "thumbs_up"
 LABEL_FIST = "fist"
+LABEL_FINGER_3_ANOTHER = "finger_3_another"
 LABEL_UNKNOWN = "unknown"
 
 _DNN_LABELS = [
     LABEL_FINGER_1,
     LABEL_FINGER_2,
     LABEL_FINGER_3,
+    LABEL_FINGER_3_ANOTHER,
     LABEL_FINGER_4,
     LABEL_FINGER_5,
     LABEL_THUMBS_UP,
@@ -40,6 +42,7 @@ _LABEL_TO_COUNT = {
     LABEL_FINGER_1: 1,
     LABEL_FINGER_2: 2,
     LABEL_FINGER_3: 3,
+    LABEL_FINGER_3_ANOTHER: 3,
     LABEL_FINGER_4: 4,
     LABEL_FINGER_5: 5,
     LABEL_THUMBS_UP: 1,
@@ -47,7 +50,7 @@ _LABEL_TO_COUNT = {
     LABEL_UNKNOWN: 0,
 }
 
-_DEFAULT_ONNX = os.path.join(os.path.dirname(__file__), "models", "gesture_mlp.onnx")
+_DEFAULT_ONNX = os.path.join(os.path.dirname(__file__), "models", "gesture_mlp_60f_8cls.onnx")
 
 # ---- feature extraction (60-dim: normalized coordinates + thumb cosines) ----
 
@@ -122,7 +125,7 @@ def landmarks_to_numpy(landmarks) -> np.ndarray:
 
 # ---- DNN classifier ----
 
-DEFAULT_GESTURE_CONFIDENCE = 0.8
+DEFAULT_GESTURE_CONFIDENCE = 0.7
 
 class GestureClassifierDNN:
     """ONNX MLP classifier for single-hand gesture recognition."""
@@ -157,6 +160,9 @@ class GestureClassifierDNN:
             return LABEL_UNKNOWN, conf, 0
 
         label = _DNN_LABELS[idx]
+        # finger_3_another → finger_3 로 통합
+        if label == LABEL_FINGER_3_ANOTHER:
+            label = LABEL_FINGER_3
         count = _LABEL_TO_COUNT[label]
         return label, conf, count
 

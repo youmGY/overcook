@@ -130,6 +130,9 @@ class GameDrawMixin:
                 btn.draw(screen)
             self._draw_camera_panel(pipeline_frame)
 
+        if self.state == "play":
+            self._record_frame()
+
     def _draw_recipes_panel(self):
         rx, ry, rw, rh = self._recipe_panel_rect()
         if rh < 60: return
@@ -288,6 +291,11 @@ class GameDrawMixin:
         txt(screen, f"{self.score} pts", 40, C["white"], gw // 2, gh // 2 - 20)
         txt(screen, "Click Start to play again", 18, (150, 150, 200), gw // 2, gh // 2 + 40)
         self.btn_start.draw(screen)
+        self._record_frame()
+        if self._record_stop_after_over_draws >= 0:
+            self._record_stop_after_over_draws -= 1
+            if self._record_stop_after_over_draws <= 0:
+                self._stop_recording("game_over_postscreen")
 
     def draw_paused(self):
         self.draw()
@@ -299,4 +307,9 @@ class GameDrawMixin:
         self.btn_pause_restart.draw(screen)
         self.btn_pause_home.draw(screen)
         self.btn_pause_settings.draw(screen)
+        rec_label, rec_col = self._record_btn_style()
+        self.btn_pause_record.label = rec_label
+        self.btn_pause_record.base = rec_col
+        self.btn_pause_record.draw(screen)
         self.settings_overlay.draw(screen)
+        self._record_frame()
