@@ -105,9 +105,7 @@ def main():
         print(f"[WARN] 60f 모델 없음: {onnx_path} — 판정 표시 안 함")
 
     # MediaPipe HandLandmarker
-    task_path = os.path.abspath(
-        os.path.join(base_dir, "..", "src", "recognition", "hand_landmarker.task")
-    )
+    task_path = 'overcook\\recognition\\models\\hand_landmarker.task'
     if not os.path.exists(task_path):
         print(f"[ERROR] hand_landmarker.task 없음: {task_path}")
         sys.exit(1)

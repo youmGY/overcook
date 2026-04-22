@@ -10,11 +10,14 @@ Label set:
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 import numpy as np
 import onnxruntime as ort
+
+_gesture_log = logging.getLogger("gesture_dnn")
 
 # Canonical labels
 LABEL_FINGER_1 = "finger_1"
@@ -155,6 +158,11 @@ class GestureClassifierDNN:
         probs = exp / exp.sum()
         idx = int(np.argmax(probs))
         conf = float(probs[idx])
+
+        # 프레임별 로그: input features + 확률분포
+        prob_str = ", ".join(f"{_DNN_LABELS[i]}={probs[i]:.3f}" for i in range(len(_DNN_LABELS)))
+        _gesture_log.debug("input=%s | probs=[%s] | pred=%s (%.1f%%)",
+                           features[0].tolist(), prob_str, _DNN_LABELS[idx], conf * 100)
 
         if conf < self._threshold:
             return LABEL_UNKNOWN, conf, 0

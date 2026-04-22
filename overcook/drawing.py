@@ -77,6 +77,29 @@ class GameDrawMixin:
         frame = frame.swapaxes(0, 1)
         return pygame.surfarray.make_surface(frame)
 
+    def _draw_gesture_debug(self):
+        """Draw gesture label and confidence at top-left of screen."""
+        hand_inputs = getattr(self, '_last_hand_inputs', None)
+        if not hand_inputs:
+            return
+        x0, y0 = 10, 10
+        # 반투명 배경
+        bg = pygame.Surface((260, len(hand_inputs) * 22 + 6), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 160))
+        screen.blit(bg, (x0 - 4, y0 - 2))
+        for i, h in enumerate(hand_inputs):
+            conf = h.gesture_confidence
+            gesture = h.gesture or "unknown"
+            if gesture == "unknown" and conf == 0.0:
+                color = (120, 120, 120)
+            elif conf > 0.7:
+                color = (0, 255, 100)
+            else:
+                color = (255, 255, 80)
+            label_str = f"{h.hand_id}: {gesture} ({conf:.0%})"
+            s = F[14].render(label_str, True, color)
+            screen.blit(s, (x0, y0 + i * 22))
+
     def draw(self, pipeline_frame=None):
         gw, gh = screen.get_size()
         gy = self._gy()
@@ -129,6 +152,7 @@ class GameDrawMixin:
             for btn in self.btn_acts:
                 btn.draw(screen)
             self._draw_camera_panel(pipeline_frame)
+            self._draw_gesture_debug()
 
         if self.state == "play":
             self._record_frame()

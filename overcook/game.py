@@ -859,6 +859,11 @@ class Game(GameDrawMixin):
         self.audio.play("start_whistle")
         self.audio.play_bgm("play_loop")
         self._hurry_bgm_active = False
+        # Start recording preprocessed pipeline frames
+        if self._pipeline is not None:
+            save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "recordings")
+            path = self._pipeline.start_recording(save_dir)
+            log.info("Pipeline video recording started: %s", path)
 
     def _spawn_order(self):
         active = sum(1 for o in self.orders if o.status == "active")

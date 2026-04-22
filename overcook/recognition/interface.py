@@ -1,6 +1,8 @@
 """Unified recognition pipeline and HandInput interface for Part B."""
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -70,6 +72,7 @@ class HandInput:
     motion_confidence: float
     motion_count: int = 0
     stale: bool = False
+    gesture_confidence: float = 0.0
 
 
 class RecognitionPipeline:
@@ -116,6 +119,56 @@ class RecognitionPipeline:
         }
         self._last_stable_count: Dict[str, int] = {"left": 0, "right": 0}
 
+        # Video recording
+        self._video_writer: Optional[cv2.VideoWriter] = None
+        self._video_path: Optional[str] = None
+        self._video_writer_raw: Optional[cv2.VideoWriter] = None
+        self._video_path_raw: Optional[str] = None
+
+    def start_recording(self, save_dir: str = ".", fps: float = 30.0) -> str:
+        """Start recording raw + preprocessed frames to uncompressed AVI files. Returns preprocessed path."""
+        os.makedirs(save_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        self._video_path = os.path.join(save_dir, f"gesture_input_{stamp}.avi")
+        self._video_path_raw = os.path.join(save_dir, f"gesture_raw_{stamp}.avi")
+        # Writers will be lazily initialized on first frame (need frame size)
+        self._video_writer = "pending"
+        self._video_writer_raw = "pending"
+        return self._video_path
+
+    def stop_recording(self) -> None:
+        """Stop recording and release the video writers."""
+        if self._video_writer is not None and self._video_writer != "pending":
+            self._video_writer.release()
+        self._video_writer = None
+        self._video_path = None
+        if self._video_writer_raw is not None and self._video_writer_raw != "pending":
+            self._video_writer_raw.release()
+        self._video_writer_raw = None
+        self._video_path_raw = None
+
+    def _init_writer(self, writer, path, frame):
+        """Lazily initialize a VideoWriter from the first frame (uncompressed AVI)."""
+        if writer == "pending":
+            h, w = frame.shape[:2]
+            fourcc = 0  # uncompressed RGB
+            return cv2.VideoWriter(path, fourcc, 30.0, (w, h))
+        return writer
+
+    def _write_frame(self, frame) -> None:
+        """Write a preprocessed frame to the video file."""
+        if self._video_writer is None:
+            return
+        self._video_writer = self._init_writer(self._video_writer, self._video_path, frame)
+        self._video_writer.write(frame)
+
+    def _write_frame_raw(self, frame) -> None:
+        """Write a raw frame to the video file."""
+        if self._video_writer_raw is None:
+            return
+        self._video_writer_raw = self._init_writer(self._video_writer_raw, self._video_path_raw, frame)
+        self._video_writer_raw.write(frame)
+
     @property
     def last_frame(self):
         return self._last_frame
@@ -144,8 +197,15 @@ class RecognitionPipeline:
             return []
         if self.flip:
             frame = cv2.flip(frame, 1)
+
+        # Record raw frame (after flip, before CLAHE)
+        self._write_frame_raw(frame)
+
         if self._clahe:
             frame = _apply_clahe(frame, self._clahe_obj)
+
+        # Record preprocessed frame (after CLAHE, before MediaPipe)
+        self._write_frame(frame)
 
         hand_results = self._hands.process(frame, draw=draw_overlay)
         hands = self._splitter.update(hand_results, flipped=self.flip)
@@ -153,6 +213,7 @@ class RecognitionPipeline:
         per_hand_label: Dict[str, str] = {}
         per_hand_count: Dict[str, int] = {}
         per_hand_confirmed: Dict[str, bool] = {}
+        per_hand_conf: Dict[str, float] = {}
         hand_flags: Dict[str, object] = {}
 
         for hand_id in ("left", "right"):
@@ -169,6 +230,7 @@ class RecognitionPipeline:
                     per_hand_label[hand_id] = label
                     per_hand_count[hand_id] = 0
                 per_hand_confirmed[hand_id] = False
+                per_hand_conf[hand_id] = 0.0
                 hand_flags[hand_id] = compute_hand_flags(None, "", False)
                 self._missing_hold[hand_id] += 1
                 continue
@@ -184,6 +246,7 @@ class RecognitionPipeline:
             per_hand_label[hand_id] = label
             per_hand_count[hand_id] = _count_from_label(label, fallback=count)
             per_hand_confirmed[hand_id] = just_confirmed
+            per_hand_conf[hand_id] = _conf
             if label != LABEL_UNKNOWN:
                 self._last_stable_label[hand_id] = label
                 self._last_stable_count[hand_id] = per_hand_count[hand_id]
@@ -246,6 +309,7 @@ class RecognitionPipeline:
                     motion_confidence=float(per_conf),
                     motion_count=per_count,
                     stale=state.stale,
+                    gesture_confidence=per_hand_conf.get(hand_id, 0.0),
                 )
             )
 
@@ -253,6 +317,7 @@ class RecognitionPipeline:
         return outputs
 
     def close(self) -> None:
+        self.stop_recording()
         try:
             self._hands.close()
         finally:

@@ -20,6 +20,7 @@ def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) ->
     gesture_gi = GameInput()
     if game.use_gesture:
         hand_inputs, pipeline_frame = game.gesture_step()
+        game._last_hand_inputs = hand_inputs or []
         if hand_inputs:
             local_overlay = game._player_overlays.get(game.local_player_id, False)
             any_thumbs_up = any(
