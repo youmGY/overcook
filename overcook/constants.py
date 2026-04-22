@@ -75,7 +75,7 @@ OVER_STIR_THRESHOLD = STIR_ACTIONS + 5
 
 # Score penalties.
 WRONG_SUBMIT_PENALTY = 30  # submitting a dish with no matching order
-BURN_SUBMIT_PENALTY_FRAC = 0.5  # fraction of recipe pts deducted for burned dish
+BURN_SUBMIT_PENALTY = 70  # fixed pts deducted for submitting a burned dish
 
 # Player–station interaction range in pixels.
 INTERACTION_RANGE = 110

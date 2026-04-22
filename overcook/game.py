@@ -25,7 +25,7 @@ from .engine import screen, F, get_img
 from .constants import (
     C, INGS, ING_KEYS, RECIPES,
     BURN_TIME, ORDER_TIME, GAME_TIME, CHOP_ACTIONS, STIR_ACTIONS,
-    OVER_STIR_THRESHOLD, WRONG_SUBMIT_PENALTY, INTERACTION_RANGE,
+    OVER_STIR_THRESHOLD, WRONG_SUBMIT_PENALTY, BURN_SUBMIT_PENALTY, INTERACTION_RANGE,
 )
 from .utils import rr, txt, bar
 from .ui import Popup, Btn, RecipeOverlay, IngredientOverlay, SettingsOverlay
@@ -955,7 +955,7 @@ class Game:
 
         if matched:
             if dish.get("burned"):
-                penalty = matched.recipe["pts"] // 2
+                penalty = BURN_SUBMIT_PENALTY
                 self.score = max(0, self.score - penalty)
                 matched.status = "done"
                 self._clear_submit_source(from_holding)
