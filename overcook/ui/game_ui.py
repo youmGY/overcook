@@ -215,8 +215,8 @@ class IngredientOverlay:
             name_s = F[14].render(ing["label"], True, C["white"])
             surf.blit(name_s, (rect.centerx - name_s.get_width() // 2, rect.y + rect.h - 22))
 
-        txt(surf, "Press 1-5 to select  |  Click card  |  ESC to cancel", 12,
-            (140, 140, 170), gw // 2, self.cards[0][0].bottom + 20)
+        # txt(surf, "Press 1-5 to select  |  Click card  |  ESC to cancel", 12,
+            # (140, 140, 170), gw // 2, self.cards[0][0].bottom + 20)
 
     def highlight_by_index(self, idx: int) -> None:
         """Highlight ingredient card by 0-based index."""

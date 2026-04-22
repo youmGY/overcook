@@ -1,6 +1,7 @@
 """Unified recognition pipeline and HandInput interface for Part B."""
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -257,6 +258,53 @@ class RecognitionPipeline:
             self._hands.close()
         finally:
             self._cap.release()
+
+
+class ThreadedRecognitionPipeline:
+    """RecognitionPipeline을 백그라운드 스레드에서 실행하는 래퍼.
+
+    메인 루프는 step() 대신 get_latest()를 호출해 최신 결과를 즉시 받는다.
+    새 카메라 프레임이 도착할 때만 처리하므로 CPU 낭비가 없다.
+    """
+
+    def __init__(self, pipeline: RecognitionPipeline) -> None:
+        self._pipeline = pipeline
+        self._lock = threading.Lock()
+        self._latest_hands: List[HandInput] = []
+        self._latest_frame = None
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="gesture-worker")
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            # 새 카메라 프레임이 도착할 때까지 대기 (중복 처리 방지)
+            self._pipeline._cap.wait_for_new_frame(timeout=0.1)
+            if self._stop_event.is_set():
+                break
+            hands = self._pipeline.step(draw_overlay=True)
+            frame = self._pipeline.last_frame
+            with self._lock:
+                self._latest_hands = hands
+                self._latest_frame = frame
+
+    def get_latest(self) -> Tuple[List[HandInput], object]:
+        """최신 인식 결과를 블로킹 없이 반환."""
+        with self._lock:
+            return list(self._latest_hands), self._latest_frame
+
+    @property
+    def fps(self) -> float:
+        return self._pipeline.fps
+
+    @property
+    def motion_debug(self) -> Dict[str, MotionDebug]:
+        return self._pipeline.motion_debug
+
+    def close(self) -> None:
+        self._stop_event.set()
+        self._thread.join(timeout=2.0)
+        self._pipeline.close()
 
 
 _global_pipeline: Optional[RecognitionPipeline] = None

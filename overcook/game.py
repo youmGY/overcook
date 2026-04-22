@@ -879,6 +879,7 @@ class Game(GameDrawMixin):
                     "Chop button:",
                     "Stir button:",
                     "Stir to start",
+                    "Click an ingredient card",
                     # "Chop it first",
                 )
                 if any(tok in msg for tok in beginner_tokens):
@@ -893,7 +894,7 @@ class Game(GameDrawMixin):
             return _apply_hint_visibility(f"Stirring! Press Stir ({st.pot_stirs}/{STIR_ACTIONS})")
         # 로컬 플레이어의 overlay 상태 확인
         local_overlay_active = self._player_overlays.get(self.local_player_id, False)
-        if local_overlay_active: 
+        if local_overlay_active:
             return _apply_hint_visibility("Click an ingredient card  |  ESC to cancel")
         st = self._near()
         if not st: return _apply_hint_visibility("")
