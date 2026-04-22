@@ -499,8 +499,8 @@ def _main_multiplayer(ui_mode: str, args):
             if game.state != "play":
                 game.update(dt, GameInput(), mpos, _btn_pressed)
                 if game.state == "over":
-                    server.broadcast_game_over(game.score)
-                    server.stop()
+                    # Keep server alive so host can restart or return home.
+                    server.broadcast_state(game.serialize_state())
                     game.draw_over()
                 elif game.state == "title":
                     server.stop()
@@ -561,12 +561,9 @@ def _main_multiplayer(ui_mode: str, args):
                 server.broadcast_state(game.serialize_state())
 
             if game.state == "over":
-                server.broadcast_game_over(game.score)
-                server.stop()
                 game.draw_over()
                 pygame.display.flip()
-                game.shutdown()
-                return
+                continue
             game.draw(pipeline_frame)
             pygame.display.flip()
 
@@ -588,13 +585,6 @@ def _main_multiplayer(ui_mode: str, args):
                 pygame.display.flip()
                 continue
 
-            if game.state == "over":
-                game.draw_over()
-                pygame.display.flip()
-                client.close()
-                game.shutdown()
-                return
-
             if client_paused:
                 try:
                     state = client.state_queue.get_nowait()
@@ -615,9 +605,8 @@ def _main_multiplayer(ui_mode: str, args):
                 if game.state == "over":
                     game.draw_over()
                     pygame.display.flip()
-                    client.close()
-                    game.shutdown()
-                    return
+                    client_paused = False
+                    continue
                 game.update(dt, GameInput(), mpos, _btn_pressed)
                 if game.state == "play":
                     client_paused = False
@@ -672,8 +661,22 @@ def _main_multiplayer(ui_mode: str, args):
             except Exception:
                 pass
 
+            if game.state == "title":
+                client.close()
+                game.shutdown()
+                game = None
+                client = None
+                client_paused = False
+                lobby_state = "lobby_menu"
+                lobby_ui.audio.play_bgm("intro_bgm")
+                mpressed = False
+                pygame.display.flip()
+                continue
+
             if game.state == "paused":
                 game.draw_paused()
+            elif game.state == "over":
+                game.draw_over()
             else:
                 game.draw(pipeline_frame)
             pygame.display.flip()
