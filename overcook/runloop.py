@@ -369,6 +369,9 @@ def _main_multiplayer(ui_mode: str, args):
                 info = server.get_lobby_info()
                 if info["all_ready"] and info["count"] > 0:
                     player_names = {p["id"]: p["name"] for p in info["players"]}
+                    if lobby_gesture_pipeline:
+                        lobby_gesture_pipeline.close()
+                        lobby_gesture_pipeline = None
                     game = Game(
                         ui_mode=ui_mode,
                         use_gesture=args.gesture,
@@ -392,9 +395,6 @@ def _main_multiplayer(ui_mode: str, args):
                     game.audio.play("start_whistle")
                     game.audio.play_bgm("play_loop")
                     server.start_game()
-                    if lobby_gesture_pipeline:
-                        lobby_gesture_pipeline.close()
-                        lobby_gesture_pipeline = None
                     lobby_state = "playing_host"
                     mpressed = False
                     continue
@@ -461,6 +461,9 @@ def _main_multiplayer(ui_mode: str, args):
                 event_msg = client.event_queue.get_nowait()
                 if event_msg.get("type") == "game_start":
                     player_names = {p["id"]: p["name"] for p in lobby_ui.players}
+                    if lobby_gesture_pipeline:
+                        lobby_gesture_pipeline.close()
+                        lobby_gesture_pipeline = None
                     game = Game(
                         ui_mode=ui_mode,
                         use_gesture=args.gesture,
@@ -481,9 +484,6 @@ def _main_multiplayer(ui_mode: str, args):
                     game.state = "play"
                     game.audio.play("start_whistle")
                     game.audio.play_bgm("play_loop")
-                    if lobby_gesture_pipeline:
-                        lobby_gesture_pipeline.close()
-                        lobby_gesture_pipeline = None
                     lobby_state = "playing_client"
                     mpressed = False
             except Exception:
