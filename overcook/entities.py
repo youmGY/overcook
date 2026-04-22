@@ -309,7 +309,7 @@ class Station:
                     dish_img = _load_completed_food_img("unknown_dish.png", dish_icon_size, dish_icon_size)
 
             if dish_img:
-                surf.blit(dish_img, (ix - dish_img.get_width() // 2, iy - dish_img.get_height() // 2 + 90))
+                surf.blit(dish_img, (ix - dish_img.get_width() // 2, iy - dish_img.get_height() // 2 + 80))
             else:
                 # Fallback marker if icon file is missing.
                 col = C["burn"] if self.pot_burned else C["green"]
