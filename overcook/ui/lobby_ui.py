@@ -248,9 +248,9 @@ class LobbyUI:
         pygame.draw.rect(screen, (80, 90, 120), (cam_x - 2, cam_y - 2, cam_w + 4, cam_h + 4), 2)
         
         try:
-            # last_pipeline_frame is BGR; convert to RGB and mirror for selfie view.
+            # last_pipeline_frame is BGR and already flipped by the pipeline;
+            # just convert to RGB (no extra mirror).
             frame = self.last_pipeline_frame[:, :, ::-1]
-            frame = frame[:, ::-1, :]
 
             src_h, src_w = frame.shape[:2]
             scale = min(cam_w / float(src_w), cam_h / float(src_h))
