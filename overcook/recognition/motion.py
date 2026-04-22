@@ -110,11 +110,11 @@ _SPEED_WINDOW = 5
 
 _AXIS_DOMINANCE = 1.1
 _AMP_WINDOW = 30
-_HAND_CACHE_MAX = 15
-_STILL_SPEED_MAX = 0.002
-_STILL_RESET_FRAMES = 30
+_HAND_CACHE_MAX = 30
+_STILL_SPEED_MAX = 0.001
+_STILL_RESET_FRAMES = 60
 _HOLD_FRAMES = 10
-_BUFFER_MAXLEN = 120
+_BUFFER_MAXLEN = 600
 _DESIGN_FPS = 30
 _FPS_WARMUP_MIN = 8
 _HAND_SCALE_REF = 0.12
@@ -265,6 +265,11 @@ class MotionDetector:
             "right": MotionDebug(),
         }
 
+    def reset_hand(self, hand: str = "right") -> None:
+        """Clear motion tracking state for one hand (called by game on chop/stir end)."""
+        if hand in self._state:
+            _reset_motion_track_state(self._state[hand])
+
     def update(
         self,
         hand_flags: Dict[str, HandFlags],
@@ -314,10 +319,14 @@ class MotionDetector:
             wrist_pos = hand_wrists.get(hand)
             hand_scale_now = hand_scales.get(hand)
             if hand_scale_now is not None:
-                st.hand_scale = (
-                    (1.0 - _HAND_SCALE_EMA_ALPHA) * st.hand_scale
-                    + _HAND_SCALE_EMA_ALPHA * hand_scale_now
-                )
+                if st.wrist_absent >= cache_max:
+                    # 첫 감지 시 즉시 설정 (EMA 없이)
+                    st.hand_scale = hand_scale_now
+                else:
+                    st.hand_scale = (
+                        (1.0 - _HAND_SCALE_EMA_ALPHA) * st.hand_scale
+                        + _HAND_SCALE_EMA_ALPHA * hand_scale_now
+                    )
 
             hand_factor = max(
                 _HAND_SCALE_MIN_FACTOR,
@@ -352,7 +361,7 @@ class MotionDetector:
             else:
                 if st.last_wrist_pos and st.wrist_absent < cache_max:
                     vx, vy = st.last_wrist_vel
-                    damp = 0.7 ** ((st.wrist_absent + 1) / fps_scale)
+                    damp = 0.85 ** ((st.wrist_absent + 1) / fps_scale)
                     pred_x = max(0.0, min(1.0, st.last_wrist_pos[0] + vx * damp))
                     pred_y = max(0.0, min(1.0, st.last_wrist_pos[1] + vy * damp))
                     st.wy.append(pred_y)
@@ -393,8 +402,15 @@ class MotionDetector:
                     if new_dir_y != st._dir_y:
                         if abs(st._ema_y - st._extreme_y) >= amp_y_thresh:
                             st._rev_chop += 1
-                        st._extreme_y = st._ema_y
-                        st._dir_y = new_dir_y
+                            # Clear y buffer on valid reversal; seed with the
+                            # previous extreme so amplitude recovers instantly.
+                            prev_extreme_y = st._extreme_y
+                            st.wy.clear()
+                            st.wy.append(prev_extreme_y)
+                            st.wy.append(wy_raw)
+                            st._extreme_y = st._ema_y
+                            st._dir_y = new_dir_y
+                        # amplitude 미달 시 extreme/dir 유지 (노이즈 micro-flip 무시)
                     elif (st._dir_y == 1 and st._ema_y > st._extreme_y) or (st._dir_y == -1 and st._ema_y < st._extreme_y):
                         st._extreme_y = st._ema_y
                 elif len(st.wy) >= 3:
@@ -406,16 +422,22 @@ class MotionDetector:
                     if new_dir_x != st._dir_x:
                         if abs(st._ema_x - st._extreme_x) >= amp_x_thresh:
                             st._rev_stir += 1
-                        st._extreme_x = st._ema_x
-                        st._dir_x = new_dir_x
+                            # Clear x buffer on valid reversal (same rationale).
+                            prev_extreme_x = st._extreme_x
+                            st.wx.clear()
+                            st.wx.append(prev_extreme_x)
+                            st.wx.append(wx_raw)
+                            st._extreme_x = st._ema_x
+                            st._dir_x = new_dir_x
+                        # amplitude 미달 시 extreme/dir 유지 (노이즈 micro-flip 무시)
                     elif (st._dir_x == 1 and st._ema_x > st._extreme_x) or (st._dir_x == -1 and st._ema_x < st._extreme_x):
                         st._extreme_x = st._ema_x
                 elif len(st.wx) >= 3:
                     st._dir_x = 1 if st._ema_x > st.wx[-2] else -1
                     st._extreme_x = st._ema_x
 
-            r_y_amp = _recent_amplitude(st.wy, amp_window)
-            r_x_amp = _recent_amplitude(st.wx, amp_window)
+            r_y_amp = _recent_amplitude(st.wy, len(st.wy))
+            r_x_amp = _recent_amplitude(st.wx, len(st.wx))
             chop_osc = st._rev_chop
             stir_osc = st._rev_stir
 

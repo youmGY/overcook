@@ -128,6 +128,10 @@ class RecognitionPipeline:
     def motion_debug(self) -> Dict[str, MotionDebug]:
         return self._motion.debug
 
+    def reset_motion(self, hand: str = "right") -> None:
+        """Clear motion tracking state for a hand."""
+        self._motion.reset_hand(hand)
+
     def _mp_handedness_label(self, hand_id: str) -> str:
         mp_label = "Right" if hand_id == "left" else "Left"
         if self.flip:

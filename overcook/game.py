@@ -311,13 +311,14 @@ class Game:
 
             fps = 60 if fast_motion else 30
             max_hands = 1
-            min_conf = 0.15 if fast_motion else 0.2
+            min_det = 0.15 if fast_motion else 0.2
+            min_track = 0.1
             self._pipeline = RecognitionPipeline(
                 camera_cfg=CameraConfig(device_index=device, width=640, height=480, fps=fps),
                 hand_cfg=HandTrackerConfig(
                     max_num_hands=max_hands,
-                    min_detection_confidence=min_conf,
-                    min_tracking_confidence=min_conf,
+                    min_detection_confidence=min_det,
+                    min_tracking_confidence=min_track,
                     detect_every_n_frames=1,
                     input_scale=1.0,
                 ),
@@ -730,6 +731,8 @@ class Game:
             self._lock_mode = "chop"
             self._locked_station = st
             self._motion_gate_ready["chop"] = False
+            if self._pipeline:
+                self._pipeline.reset_motion()
             return
 
         # Not holding anything and a chopped item is ready: pick it up.
@@ -796,6 +799,8 @@ class Game:
                 self._lock_mode = "stir"
                 self._locked_station = st
                 self._motion_gate_ready["stir"] = False
+                if self._pipeline:
+                    self._pipeline.reset_motion()
                 self.audio.play("ignite_whoosh")
             st.pot_stirs += 1
             if st.pot_stirs >= OVER_STIR_THRESHOLD:
@@ -1215,6 +1220,8 @@ class Game:
                 # post-chop hand transition doesn't fire unintended actions.
                 self._thumbs_up_held = True
                 self._move_blocked = True
+                if self._pipeline:
+                    self._pipeline.reset_motion()
             elif self._lock_mode == "stir" and st and (
                 st.pot_cooked
                 or st.pot_burned
@@ -1226,6 +1233,8 @@ class Game:
                 # Same post-stir guard.
                 self._thumbs_up_held = True
                 self._move_blocked = True
+                if self._pipeline:
+                    self._pipeline.reset_motion()
         else:
             move_to_slot = gi.move_to_slot if self._station_shortcuts_enabled() else None
             clicked_station = self._station_at_point(gi.station_click) if self._station_shortcuts_enabled() else None
@@ -1259,7 +1268,10 @@ class Game:
             self.player.update(move_dir, dt, gw, self._gy())
 
             handled = False
-            if act_flags["chop"]:
+            if act_flags["confirm"]:
+                self.do_action()
+                handled = True
+            if act_flags["chop"] and not handled:
                 st = self._near()
                 if st and st.kind == "chop":
                     self._act_chop(st, chop_action=True)
@@ -1269,8 +1281,6 @@ class Game:
                 if st and st.kind == "pot":
                     self._act_pot(st, stir_only=True)
                     handled = True
-            if act_flags["confirm"] and not handled:
-                self.do_action()
 
         # Emit audio/popup for station events collected at the top of this frame
         for s, ev in station_events:
