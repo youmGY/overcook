@@ -1233,8 +1233,10 @@ class Game(GameDrawMixin):
             self._lock_mode = None
             self._locked_station = None
             self._motion_gate_ready["chop"] = False
-            self._thumbs_up_held = True
-            self._move_blocked = True
+            # Gesture cooldown flags — only meaningful for local input collection
+            if self.player.player_id == self.local_player_id:
+                self._thumbs_up_held = True
+                self._move_blocked = True
             if self._pipeline:
                 self._pipeline.reset_motion()
         elif self._lock_mode == "stir" and st and (
@@ -1245,8 +1247,9 @@ class Game(GameDrawMixin):
             self._lock_mode = None
             self._locked_station = None
             self._motion_gate_ready["stir"] = False
-            self._thumbs_up_held = True
-            self._move_blocked = True
+            if self.player.player_id == self.local_player_id:
+                self._thumbs_up_held = True
+                self._move_blocked = True
             if self._pipeline:
                 self._pipeline.reset_motion()
 
@@ -1337,24 +1340,31 @@ class Game(GameDrawMixin):
         if self.state != "play":  # H2: freeze when paused or over
             return
 
-        # Process each player's input
-        for pid, inp_dict in all_inputs.items():
+        # Update stations FIRST so chopped/cooked flags are fresh
+        # before lock-exit checks inside process_input_for_player
+        # (matches solo path order in update()).
+        station_events = []
+        for s in self.stations:
+            for ev in s.update(dt):
+                station_events.append((s, ev))
+
+        # Process each player's input (players with no input still get physics)
+        for pid in self.players:
+            inp_dict = all_inputs.get(pid, {"move_dir": 0})
             gi = GameInput.from_dict(inp_dict)
             self.process_input_for_player(pid, gi, dt)
 
-        # Update stations
-        for s in self.stations:
-            events = s.update(dt)
-            for ev in events:
-                if ev == "chop_done":
-                    self._pop(s.cx(), s.y - 14, "Chopped!", C["lime"])
-                    self.audio.play("chop_done")
-                elif ev == "cook_done":
-                    self._pop(s.cx(), s.y - 14, "Cooked! Pick it up!", C["green"])
-                    self.audio.play("cook_done")
-                elif ev == "burned":
-                    self._pop(s.cx(), s.y - 14, "BURNED!", C["burn"])
-                    self.audio.play("burn_alarm")
+        # Emit audio/popup for station events
+        for s, ev in station_events:
+            if ev == "chop_done":
+                self._pop(s.cx(), s.y - 14, "Chopped!", C["lime"])
+                self.audio.play("chop_done")
+            elif ev == "cook_done":
+                self._pop(s.cx(), s.y - 14, "Cooked! Pick it up!", C["green"])
+                self.audio.play("cook_done")
+            elif ev == "burned":
+                self._pop(s.cx(), s.y - 14, "BURNED!", C["burn"])
+                self.audio.play("burn_alarm")
 
         # Update orders
         gw, gh = screen.get_size()
