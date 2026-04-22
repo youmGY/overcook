@@ -602,12 +602,12 @@ def _main_multiplayer(ui_mode: str, args):
                         client_paused = False
                 except Exception:
                     pass
+                game.update(dt, GameInput(), mpos, _btn_pressed)
                 if game.state == "over":
                     game.draw_over()
                     pygame.display.flip()
                     client_paused = False
                     continue
-                game.update(dt, GameInput(), mpos, _btn_pressed)
                 if game.state == "play":
                     client_paused = False
                     game.audio.play("ui_resume")

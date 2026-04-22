@@ -362,7 +362,7 @@ class SettingsOverlay:
             pygame.draw.rect(surf, (80, 220, 120), cb, border_radius=4)
             txt(surf, "x", 14, C["white"], cb.centerx, cb.centery)
         label_col = (80, 220, 120) if self.amateur_mode else (180, 180, 210)
-        txt(surf, "Amateur Mode  (Show Current Orders)", 14, label_col,
+        txt(surf, "Amateur Mode  (Show Hint)", 14, label_col,
             amateur_rect.x + 40, amateur_rect.centery, anchor="midleft")
 
         mpos = pygame.mouse.get_pos()

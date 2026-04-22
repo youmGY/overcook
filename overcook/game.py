@@ -779,6 +779,15 @@ class Game(GameDrawMixin):
             self._clear_submit_source(from_holding)
             return
 
+        # Burned dishes always get -70 penalty, regardless of orders
+        if dish.get("burned"):
+            penalty = BURN_SUBMIT_PENALTY
+            self.score = max(0, self.score - penalty)
+            self._clear_submit_source(from_holding)
+            self._pop(st.cx(), st.y - 30, f"-{penalty} pts! BURNED!", C["burn"])
+            self.audio.play("fail_buzz")
+            return
+
         matched = None
         for o in self.orders:
             if o.status != "active": continue
@@ -787,21 +796,13 @@ class Game(GameDrawMixin):
                 break
 
         if matched:
-            if dish.get("burned"):
-                penalty = BURN_SUBMIT_PENALTY
-                self.score = max(0, self.score - penalty)
-                matched.status = "done"
-                self._clear_submit_source(from_holding)
-                self._pop(st.cx(), st.y - 30, f"-{penalty} pts! BURNED!", C["burn"])
-                self.audio.play("fail_buzz")
-            else:
-                bonus = int(matched.t / ORDER_TIME * 50)
-                pts = matched.recipe["pts"] + bonus
-                self.score += pts
-                matched.status = "done"
-                self._clear_submit_source(from_holding)
-                self._pop(st.cx(), st.y - 30, f"+{pts} pts!", C["green"])
-                self.audio.play("serve_chaching")
+            bonus = int(matched.t / ORDER_TIME * 50)
+            pts = matched.recipe["pts"] + bonus
+            self.score += pts
+            matched.status = "done"
+            self._clear_submit_source(from_holding)
+            self._pop(st.cx(), st.y - 30, f"+{pts} pts!", C["green"])
+            self.audio.play("serve_chaching")
         else:
             penalty = WRONG_SUBMIT_PENALTY
             self.score = max(0, self.score - penalty)
@@ -972,7 +973,8 @@ class Game(GameDrawMixin):
                     self._start_game_session()
                     self.audio.play("ui_click")
             else:
-                if self.btn_over_restart.update(mpos, mpressed):
+                # Restart button only for host
+                if self.is_server and self.btn_over_restart.update(mpos, mpressed):
                     self._stop_recording("restart")
                     self._start_game_session()
                     self.audio.play("ui_click")

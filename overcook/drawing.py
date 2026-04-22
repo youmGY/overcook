@@ -298,7 +298,9 @@ class GameDrawMixin:
         txt(screen, "Game Over!", 40, C["gold"], gw // 2, gh // 2 - 80)
         txt(screen, f"{self.score} pts", 40, C["white"], gw // 2, gh // 2 - 20)
         txt(screen, "Choose next action", 18, (150, 150, 200), gw // 2, gh // 2 + 20)
-        self.btn_over_restart.draw(screen)
+        # Only show restart button to host (server)
+        if self.is_server:
+            self.btn_over_restart.draw(screen)
         self.btn_over_home.draw(screen)
         self._record_frame()
         if self._record_stop_after_over_draws >= 0:
