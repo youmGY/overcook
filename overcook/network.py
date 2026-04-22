@@ -396,21 +396,36 @@ class GameServer:
     # ── game-play helpers ─────────────────────────────────────────────
 
     def collect_inputs(self) -> Dict[int, dict]:
-        """Drain input queues → {player_id: input_dict}. Non-blocking."""
+        """Drain input queues → {player_id: input_dict}. Non-blocking.
+
+        One-shot boolean flags (confirm, chop, stir, action, put_down,
+        overlay_confirm, overlay_cancel) are OR-merged across all queued
+        frames so they are never silently dropped.
+        """
+        _OR_KEYS = ("confirm", "chop", "stir", "action", "put_down",
+                    "overlay_confirm", "overlay_cancel")
         inputs = {}
         with self._lock:
             for c in self._clients:
                 if not c.alive:
                     continue
-                # Consume all queued inputs and keep only the latest snapshot.
-                latest = None
+                merged = None
                 while True:
                     try:
-                        latest = c.input_queue.get_nowait()
+                        frame = c.input_queue.get_nowait()
                     except queue.Empty:
                         break
-                if latest is not None:
-                    inputs[c.player_id] = latest
+                    if merged is None:
+                        merged = dict(frame)
+                    else:
+                        for k in _OR_KEYS:
+                            if frame.get(k):
+                                merged[k] = True
+                        for k in frame:
+                            if k not in _OR_KEYS:
+                                merged[k] = frame[k]
+                if merged is not None:
+                    inputs[c.player_id] = merged
         return inputs
 
     def broadcast_state(self, state: dict):
