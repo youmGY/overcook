@@ -6,8 +6,8 @@ import pygame
 import sys
 
 from .engine import clock, FPS
-from .game import (
-    Game,
+from .game import Game
+from .input import (
     GameInput,
     hand_inputs_to_game_input,
     merge_inputs,
