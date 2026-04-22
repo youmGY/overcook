@@ -122,13 +122,15 @@ def landmarks_to_numpy(landmarks) -> np.ndarray:
 
 # ---- DNN classifier ----
 
+DEFAULT_GESTURE_CONFIDENCE = 0.8
+
 class GestureClassifierDNN:
     """ONNX MLP classifier for single-hand gesture recognition."""
 
     def __init__(
         self,
         onnx_path: Optional[str] = None,
-        confidence_threshold: float = 0.6,
+        confidence_threshold: float = DEFAULT_GESTURE_CONFIDENCE,
     ) -> None:
         path = onnx_path or _DEFAULT_ONNX
         self._session = ort.InferenceSession(path)
@@ -180,9 +182,9 @@ class GestureDebouncer:
     """Confirm a gesture only after it persists for N consecutive frames.
     
     thumbs_up uses threshold=2 (~66 ms at 30 fps) and clears instantly
-    when a different label appears.  finger_N uses the default n=3."""
+    when a different label appears.  finger_N uses the default n=2."""
 
-    n: int = 3
+    n: int = 2
     _pending: Optional[str] = None
     _streak: int = 0
     _confirmed: Optional[str] = field(default=None)

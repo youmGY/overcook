@@ -8,6 +8,7 @@ import cv2
 
 from .camera import CameraConfig, ThreadedCamera, open_camera
 from .gesture import (
+    DEFAULT_GESTURE_CONFIDENCE,
     LABEL_THUMBS_UP,
     LABEL_UNKNOWN,
     GestureClassifierDNN,
@@ -80,7 +81,7 @@ class RecognitionPipeline:
         hand_cfg: Optional[HandTrackerConfig] = None,
         flip: bool = True,
         gesture_onnx_path: Optional[str] = None,
-        gesture_confidence: float = 0.6,
+        gesture_confidence: float = DEFAULT_GESTURE_CONFIDENCE,
         clahe: bool = True,
         clahe_clip: float = 2.0,
         clahe_grid: int = 8,
