@@ -489,6 +489,8 @@ class Game(GameDrawMixin):
         self.btn_action = self.btn_acts_map["confirm"]
         self.btn_start    = Btn(gw // 2 - 250, gh // 2 + 110, 240, 80, "Start",    (184, 101, 30))
         self.btn_settings = Btn(gw // 2 + 10,  gh // 2 + 110, 240, 80, "Settings", (55, 55, 110))
+        self.btn_over_restart = Btn(gw // 2 - 200, gh // 2 + 50, 180, 64, "Restart", (120, 50, 50))
+        self.btn_over_home    = Btn(gw // 2 + 20,  gh // 2 + 50, 180, 64, "Home",    (80, 60, 120))
         _bw, _bh, _gap = 120, 52, 12
         _total = 4 * _bw + 3 * _gap
         _bx = gw // 2 - _total // 2
@@ -962,9 +964,21 @@ class Game(GameDrawMixin):
                 self.settings_overlay.active = True
                 self.audio.play("ui_click")
                 return
-            if self.btn_start.update(mpos, mpressed):
-                self._start_game_session()
-                self.audio.play("ui_click")
+            if self.state == "title":
+                if self.btn_start.update(mpos, mpressed):
+                    self._start_game_session()
+                    self.audio.play("ui_click")
+            else:
+                if self.btn_over_restart.update(mpos, mpressed):
+                    self._stop_recording("restart")
+                    self._start_game_session()
+                    self.audio.play("ui_click")
+                if self.btn_over_home.update(mpos, mpressed):
+                    self._stop_recording("home")
+                    self.audio.stop_bgm()
+                    self.audio.play_bgm("intro_bgm")
+                    self.state = "title"
+                    self.audio.play("ui_click")
             return
 
         if self.state == "paused":
@@ -1000,13 +1014,15 @@ class Game(GameDrawMixin):
 
         # Solo: handle local overlay (pantry ingredient selection)
         # In multiplayer, this path is not taken — use _process_single_input via server_tick instead.
+        # Keep simulation running while overlay is open, but block gameplay input for this frame.
         local_overlay_active = self._player_overlays.get(self.local_player_id, False)
+        overlay_block_frame = False
         if local_overlay_active:
+            overlay_block_frame = True
             if gi.overlay_cancel:
                 self._player_overlays[self.local_player_id] = False
                 self.overlay.highlighted = None
                 self._player_highlights[self.local_player_id] = None
-                return
             if gi.overlay_click:
                 key = self.overlay.check_click(gi.overlay_click)
                 if key:
@@ -1026,7 +1042,6 @@ class Game(GameDrawMixin):
                     self._player_overlays[self.local_player_id] = False
                     self.overlay.highlighted = None
                     self._player_highlights[self.local_player_id] = None
-            return
 
         if self.recipe_overlay.active: return
 
@@ -1036,7 +1051,10 @@ class Game(GameDrawMixin):
         for s in self.stations:
             station_events.extend((s, ev) for ev in s.update(dt))
 
-        if self._lock_mode:
+        if overlay_block_frame:
+            # Pantry open: no movement/action input, but keep world timers progressing.
+            self.player.update(0, dt, gw, self._gy())
+        elif self._lock_mode:
             # While action mode is locked, still allow movement controls.
             btn_triggered = self.update_ui_buttons(mpos, mpressed)
             act_flags = {

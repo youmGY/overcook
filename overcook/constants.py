@@ -68,7 +68,7 @@ CHOP_TIME  = 3.0
 CHOP_ACTIONS = 4
 STIR_ACTIONS = 5
 ORDER_TIME = 45.0
-GAME_TIME  = 150.0
+GAME_TIME  = 30.0
 
 # How many extra stirs beyond STIR_ACTIONS before the dish burns.
 OVER_STIR_THRESHOLD = STIR_ACTIONS + 5

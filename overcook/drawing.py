@@ -297,8 +297,9 @@ class GameDrawMixin:
         ov.fill((5, 5, 20, 210)); screen.blit(ov, (0, 0))
         txt(screen, "Game Over!", 40, C["gold"], gw // 2, gh // 2 - 80)
         txt(screen, f"{self.score} pts", 40, C["white"], gw // 2, gh // 2 - 20)
-        txt(screen, "Click Start to play again", 18, (150, 150, 200), gw // 2, gh // 2 + 40)
-        self.btn_start.draw(screen)
+        txt(screen, "Choose next action", 18, (150, 150, 200), gw // 2, gh // 2 + 20)
+        self.btn_over_restart.draw(screen)
+        self.btn_over_home.draw(screen)
         self._record_frame()
         if self._record_stop_after_over_draws >= 0:
             self._record_stop_after_over_draws -= 1
