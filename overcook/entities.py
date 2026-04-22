@@ -294,7 +294,27 @@ class Station:
 
     def _draw_pot_items(self, surf, ix, iy):
         """Draw ingredients in the pot plus cooking/burn progress bars."""
-        if self.pot_items:
+        # When cooking is done, show final dish icon on the station
+        # instead of individual ingredient icons.
+        if self.pot_cooked and self.pot_items:
+            dish_icon_size = 34
+            dish_img = None
+            if self.pot_burned:
+                dish_img = _load_completed_food_img("burned_dish.png", dish_icon_size, dish_icon_size)
+            else:
+                dish_name = _dish_name_from_contents(self.pot_items)
+                if dish_name:
+                    dish_img = _load_completed_food_img(f"{dish_name}.png", dish_icon_size, dish_icon_size)
+                if dish_img is None:
+                    dish_img = _load_completed_food_img("unknown_dish.png", dish_icon_size, dish_icon_size)
+
+            if dish_img:
+                surf.blit(dish_img, (ix - dish_img.get_width() // 2, iy - dish_img.get_height() // 2 + 90))
+            else:
+                # Fallback marker if icon file is missing.
+                col = C["burn"] if self.pot_burned else C["green"]
+                pygame.draw.circle(surf, col, (ix, iy), 16)
+        elif self.pot_items:
             n = min(len(self.pot_items), 3)
             for i, item in enumerate(self.pot_items[:3]):
                 ox = ix + (i - (n - 1) / 2) * 16

@@ -203,7 +203,7 @@ class Game(GameDrawMixin):
             from .recognition.interface import RecognitionPipeline
 
             fps = 60 if fast_motion else 30
-            max_hands = 1 if fast_motion else 2
+            max_hands = 1
             min_det = 0.15 if fast_motion else 0.2
             min_track = 0.1
             self._pipeline = RecognitionPipeline(
@@ -798,7 +798,7 @@ class Game(GameDrawMixin):
                 self.score += pts
                 matched.status = "done"
                 self._clear_submit_source(from_holding)
-                self._pop(st.cx(), st.y - 30, f"+{pts} pts! 🎉", C["green"])
+                self._pop(st.cx(), st.y - 30, f"+{pts} pts!", C["green"])
                 self.audio.play("serve_chaching")
         else:
             penalty = WRONG_SUBMIT_PENALTY
@@ -815,19 +815,8 @@ class Game(GameDrawMixin):
             self.audio.play("trash_thud")
             return
 
-        # No item held — clear the nearest occupied chop board only.
-        px, py = self.player.center()
-        chops = [s for s in self.stations if s.kind == "chop" and s.chop_item]
-        if chops:
-            nearest = min(chops, key=lambda s: s.dist(px, py))
-            nearest.chop_item = None
-            nearest.chop_prog = 0.0
-            nearest.chop_hits = 0
-            nearest.chopping = False
-            self._unlock_station(nearest)
-            self._pop(st.cx(), st.y + st.h + 14, "Chop board cleared", C["pink"])
-        else:
-            self._pop(st.cx(), st.y + st.h + 14, "Nothing to trash", C["white"])
+        # Station items must remain in place until explicitly picked up.
+        self._pop(st.cx(), st.y + st.h + 14, "Nothing to trash", C["white"])
 
     def do_action(self):
         # Close active overlay for this player before doing a station action.

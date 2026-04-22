@@ -9,6 +9,8 @@ States:
 """
 
 import os
+import math
+import time
 import pygame
 from ..engine import screen, F
 from ..constants import C, NET_PORT, PLAYER_COLORS
@@ -51,11 +53,13 @@ class LobbyUI:
         # Gesture state for lobby hover tracking
         self.hovered_button = None
         self._thumbs_up_time = 0.0
-        self._thumbs_up_duration = 0.55  # Hold time to avoid accidental clicks
+        self._thumbs_progress = 0.0
+        self._thumbs_up_duration = 1.0   # Hold for 1s to activate
         self._thumbs_cooldown = 0.0      # Cooldown after click
         self._hover_lock_time = 0.0      # Time stayed on same button
         self._hover_lock_duration = 0.18 # Require short stable hover before click
         self._last_hovered_button = None
+        self._last_gesture_ts = time.monotonic()
         self._cursor_pos = None          # Smoothed cursor position in screen coords
         self._cursor_alpha = 0.28        # Lower value = less sensitive movement
         # Expand usable gesture range to screen edges.
@@ -81,6 +85,18 @@ class LobbyUI:
         if sz != self._last_size:
             self._last_size = sz
             self._make_btns()
+
+    def _gesture_dt(self) -> float:
+        now = time.monotonic()
+        dt = now - self._last_gesture_ts
+        self._last_gesture_ts = now
+        return max(0.0, min(0.10, dt))
+
+    def _decay_gesture_hold(self, dt: float):
+        # Gentle decay prevents accidental cancellation from brief detection flicker.
+        self._thumbs_up_time = max(0.0, self._thumbs_up_time - dt * 2.0)
+        self._hover_lock_time = max(0.0, self._hover_lock_time - dt * 3.0)
+        self._thumbs_progress = min(1.0, self._thumbs_up_time / max(0.001, self._thumbs_up_duration))
 
     def _make_btns(self):
         gw, gh = screen.get_size()
@@ -189,6 +205,32 @@ class LobbyUI:
         hand_y = max(0, min(gh - hand_size, hand_y))
         screen.blit(hand_img_scaled, (hand_x, hand_y))
 
+    def _draw_thumbs_hold_indicator(self):
+        if self._cursor_pos is None:
+            return
+        if self.hovered_button is None:
+            return
+        if self._thumbs_progress <= 0.0:
+            return
+
+        cx, cy = int(self._cursor_pos[0]), int(self._cursor_pos[1])
+        radius = 20
+        progress = max(0.0, min(1.0, self._thumbs_progress))
+
+        # Base ring.
+        pygame.draw.circle(screen, (220, 220, 220), (cx, cy), radius, 2)
+
+        # Progress arc starting at top and moving clockwise.
+        rect = pygame.Rect(cx - radius, cy - radius, radius * 2, radius * 2)
+        start = -math.pi / 2.0
+        end = start + (math.pi * 2.0 * progress)
+        if end > start:
+            pygame.draw.arc(screen, (80, 230, 140), rect, start, end, 4)
+
+        if 12 in F:
+            remain = max(0.0, self._thumbs_up_duration - self._thumbs_up_time)
+            txt(screen, f"Hold 👍 {remain:0.1f}s", 12, (220, 235, 220), cx, cy + radius + 10)
+
     def _draw_camera_feed(self):
         """Draw camera feed at bottom-right corner of screen."""
         if self.last_pipeline_frame is None:
@@ -249,6 +291,7 @@ class LobbyUI:
             self._draw_camera_feed()
         if self.last_hand_inputs:
             self._draw_hand_visualization(self.last_hand_inputs)
+        self._draw_thumbs_hold_indicator()
 
     def draw_create(self):
         self._maybe_rebuild()
@@ -276,6 +319,7 @@ class LobbyUI:
             self._draw_camera_feed()
         if self.last_hand_inputs:
             self._draw_hand_visualization(self.last_hand_inputs)
+        self._draw_thumbs_hold_indicator()
 
     def draw_join(self):
         self._maybe_rebuild()
@@ -312,6 +356,7 @@ class LobbyUI:
             self._draw_camera_feed()
         if self.last_hand_inputs:
             self._draw_hand_visualization(self.last_hand_inputs)
+        self._draw_thumbs_hold_indicator()
 
     def draw_wait(self):
         self._maybe_rebuild()
@@ -334,6 +379,7 @@ class LobbyUI:
             self._draw_camera_feed()
         if self.last_hand_inputs:
             self._draw_hand_visualization(self.last_hand_inputs)
+        self._draw_thumbs_hold_indicator()
 
     def _draw_player_list(self, gw, gh):
         y = 100
@@ -356,14 +402,13 @@ class LobbyUI:
     def _update_gesture_hover(self, hand_inputs):
         """Update button hover based on gesture hand position. Returns True if thumbs_up click detected."""
         self.hovered_button = None
+        dt = self._gesture_dt()
 
         if not hand_inputs:
-            self._thumbs_up_time = 0.0
-            self._hover_lock_time = 0.0
+            self._decay_gesture_hold(dt)
             self._last_hovered_button = None
             return False
 
-        dt = 1.0 / 30.0
         if self._thumbs_cooldown > 0.0:
             self._thumbs_cooldown = max(0.0, self._thumbs_cooldown - dt)
 
@@ -375,8 +420,7 @@ class LobbyUI:
                 break
 
         if not hand or hand.position is None:
-            self._thumbs_up_time = 0.0
-            self._hover_lock_time = 0.0
+            self._decay_gesture_hold(dt)
             self._last_hovered_button = None
             return False
 
@@ -416,8 +460,7 @@ class LobbyUI:
 
         self.hovered_button = hovered
         if hovered is None:
-            self._thumbs_up_time = 0.0
-            self._hover_lock_time = 0.0
+            self._decay_gesture_hold(dt)
             self._last_hovered_button = None
             return False
 
@@ -427,23 +470,21 @@ class LobbyUI:
         else:
             self._hover_lock_time = 0.0
             self._last_hovered_button = hovered
-            self._thumbs_up_time = 0.0
+            self._decay_gesture_hold(dt)
 
-        # Thumbs up click: either debounced confirmation pulse or hold gesture.
-        thumbs_pulse = bool(getattr(hand, "gesture_confirmed", False) and hand.gesture == "thumbs_up")
-        if self._hover_lock_time >= self._hover_lock_duration and thumbs_pulse and self._thumbs_cooldown <= 0.0:
-            self._thumbs_up_time = 0.0
-            self._thumbs_cooldown = 0.45
-            return True
-
+        # Hold thumbs-up for 1s while hovering a stable button.
         if hand.gesture == "thumbs_up" and self._hover_lock_time >= self._hover_lock_duration:
-            self._thumbs_up_time += dt
+            self._thumbs_up_time = min(self._thumbs_up_duration, self._thumbs_up_time + dt)
             if self._thumbs_up_time >= self._thumbs_up_duration and self._thumbs_cooldown <= 0.0:
                 self._thumbs_up_time = 0.0
-                self._thumbs_cooldown = 0.45
+                self._thumbs_progress = 0.0
+                self._thumbs_cooldown = 0.5
                 return True
         else:
-            self._thumbs_up_time = 0.0
+            # Do not hard reset on a single unstable frame.
+            self._thumbs_up_time = max(0.0, self._thumbs_up_time - dt * 2.4)
+
+        self._thumbs_progress = min(1.0, self._thumbs_up_time / max(0.001, self._thumbs_up_duration))
 
         return False
 
