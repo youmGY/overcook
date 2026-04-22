@@ -58,8 +58,22 @@ class LobbyUI:
         self._last_hovered_button = None
         self._cursor_pos = None          # Smoothed cursor position in screen coords
         self._cursor_alpha = 0.28        # Lower value = less sensitive movement
+        # Expand usable gesture range to screen edges.
+        # Example: 0.12 means 12% inner margin maps to full [0..1] range.
+        self._cursor_edge_margin_x = 0.12
+        self._cursor_edge_margin_y = 0.10
         self.last_hand_inputs = None  # Store hand inputs for drawing
         self.last_pipeline_frame = None  # Store camera frame for display
+
+    @staticmethod
+    def _remap_edge(value: float, margin: float) -> float:
+        margin = max(0.0, min(0.45, float(margin)))
+        low = margin
+        high = 1.0 - margin
+        if high <= low:
+            return max(0.0, min(1.0, value))
+        remapped = (value - low) / (high - low)
+        return max(0.0, min(1.0, remapped))
 
     def _maybe_rebuild(self):
         """Rebuild buttons if screen size changed."""
@@ -367,8 +381,11 @@ class LobbyUI:
             return False
 
         gw, gh = screen.get_size()
-        raw_x = float(hand.position[0]) * gw
-        raw_y = float(hand.position[1]) * gh
+        # Stretch inner tracking area so pointer can still reach screen edges.
+        norm_x = self._remap_edge(float(hand.position[0]), self._cursor_edge_margin_x)
+        norm_y = self._remap_edge(float(hand.position[1]), self._cursor_edge_margin_y)
+        raw_x = norm_x * gw
+        raw_y = norm_y * gh
 
         # Smooth cursor to reduce sensitivity and jitter.
         if self._cursor_pos is None:
