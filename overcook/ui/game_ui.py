@@ -2,7 +2,8 @@ import pygame
 import json
 import os
 
-_SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".overcook_settings.json")
+_SETTINGS_PATH = ".overcook_settings.json"
+_LEADERBOARD_PATH = "./overcook_leaderboard.json"
 
 
 def _load_settings() -> dict:
@@ -14,9 +15,44 @@ def _load_settings() -> dict:
 
 
 def _save_settings(data: dict):
+    existing = _load_settings()
+    existing.update(data)
     try:
         with open(_SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f)
+            json.dump(existing, f)
+    except Exception:
+        pass
+
+
+def load_nickname() -> str:
+    return _load_settings().get("nickname", "Player")
+
+
+def save_nickname(name: str):
+    _save_settings({"nickname": name[:5]})
+
+
+def load_leaderboard() -> list:
+    try:
+        with open(_LEADERBOARD_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_leaderboard_entry(name: str, score: int):
+    import datetime
+    entries = load_leaderboard()
+    entries.append({
+        "name": (name[:5] if name else "---"),
+        "score": score,
+        "date": datetime.datetime.now().strftime("%m/%d"),
+    })
+    entries.sort(key=lambda x: x["score"], reverse=True)
+    entries = entries[:10]
+    try:
+        with open(_LEADERBOARD_PATH, "w", encoding="utf-8") as f:
+            json.dump(entries, f)
     except Exception:
         pass
 

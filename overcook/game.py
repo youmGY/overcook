@@ -80,6 +80,11 @@ class Game(GameDrawMixin):
         self._settings_btn_img = None
         self._load_start_btn()
         self._load_settings_btn()
+        self.player_name: str = player_name
+
+        # Singleplay leaderboard (None until game ends)
+        self.leaderboard: list | None = None
+        self._score_saved: bool = False
 
         # Multiplayer fields
         self.multiplayer = multiplayer
@@ -341,7 +346,7 @@ class Game(GameDrawMixin):
             self._player_highlights: dict = {pid: None for pid in self.players}  # pid → overlay highlighted index
         else:
             # Solo: single player
-            self.players = {0: Player(gw // 2 - Player.PW // 2, gy - Player.PH, player_id=0, name="Player 1")}
+            self.players = {0: Player(gw // 2 - Player.PW // 2, gy - Player.PH, player_id=0, name=self.player_name)}
             self.player = self.players[0]
             self._player_overlays = {0: False}
             self._player_highlights = {0: None}
@@ -1012,8 +1017,8 @@ class Game(GameDrawMixin):
                     self._start_game_session()
                     self.audio.play("ui_click")
             else:
-                # Restart button only for host
-                if self.is_server and self.btn_over_restart.update(mpos, mpressed):
+                # Restart button for host or singleplay
+                if (self.is_server or not self.multiplayer) and self.btn_over_restart.update(mpos, mpressed):
                     self._stop_recording("restart")
                     self._start_game_session()
                     self.audio.play("ui_click")

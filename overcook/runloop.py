@@ -12,6 +12,7 @@ from .input import (
     hand_inputs_to_game_input,
     merge_inputs,
 )
+from .ui.game_ui import save_leaderboard_entry, load_nickname
 
 
 def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) -> tuple:
@@ -61,8 +62,10 @@ def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) ->
     return merge_inputs(keyboard_gi, gesture_gi), pipeline_frame
 
 
-def _main_single(ui_mode: str, args):
+def _main_single(ui_mode: str, args, nickname: str = ""):
     """Single player game loop."""
+    if not nickname:
+        nickname = load_nickname()
     game = Game(
         ui_mode=ui_mode,
         use_gesture=args.gesture,
@@ -72,6 +75,7 @@ def _main_single(ui_mode: str, args):
         clahe_clip=args.clahe_clip,
         clahe_grid=args.clahe_grid,
         device=args.device,
+        player_name=nickname,
     )
     game._start_game_session()
     held = {"left": False, "right": False}
@@ -81,6 +85,8 @@ def _main_single(ui_mode: str, args):
     station_click = None
     overlay_click = None
     pipeline_frame = None
+    _score_saved = False
+    _prev_state = "play"
 
     _SLOT_KEYS = {
         pygame.K_1: 1,
@@ -176,11 +182,17 @@ def _main_single(ui_mode: str, args):
             game.shutdown()
             return
         elif game.state == "over":
+            if not _score_saved:
+                save_leaderboard_entry(nickname, game.score)
+                _score_saved = True
             game.draw_over()
         elif game.state == "paused":
             game.draw_paused()
         else:
+            if _prev_state == "over":
+                _score_saved = False
             game.draw(pipeline_frame)
+        _prev_state = game.state
 
         pygame.display.flip()
 
@@ -263,7 +275,9 @@ def _main_multiplayer(ui_mode: str, args):
                     held["left"] = True
                 if event.key in (pygame.K_RIGHT, pygame.K_d):
                     held["right"] = True
-                if event.key == pygame.K_ESCAPE and lobby_state.startswith("lobby"):
+                if not lobby_state.startswith("playing") and lobby_ui.handle_keydown(event):
+                    pass
+                elif event.key == pygame.K_ESCAPE and lobby_state.startswith("lobby"):
                     if server:
                         server.stop()
                     if client:
@@ -342,10 +356,11 @@ def _main_multiplayer(ui_mode: str, args):
             action = lobby_ui.update_menu(mpos, _btn_pressed, hand_inputs=lobby_hand_inputs)
             if action == "create":
                 host_ip = get_local_ip()
-                server = GameServer(host_ip, NET_PORT, room_name=f"{args.name}'s Room")
+                player_name = lobby_ui.nickname
+                server = GameServer(host_ip, NET_PORT, room_name=f"{player_name}'s Room", host_name=player_name)
                 server.start()
                 lobby_state = "lobby_create"
-                lobby_ui.players = [{"id": 0, "name": args.name, "ready": False}]
+                lobby_ui.players = [{"id": 0, "name": player_name, "ready": False}]
                 lobby_ui.status_text = "Room is open. Share your room name with friends."
             elif action == "join":
                 scanner = RoomScanner()
@@ -357,7 +372,7 @@ def _main_multiplayer(ui_mode: str, args):
                 if lobby_gesture_pipeline:
                     lobby_gesture_pipeline.close()
                     lobby_gesture_pipeline = None
-                _main_single(ui_mode, args)
+                _main_single(ui_mode, args, nickname=lobby_ui.nickname)
                 mpressed = False
             lobby_ui.last_hand_inputs = lobby_hand_inputs
             lobby_ui.last_pipeline_frame = lobby_pipeline_frame
@@ -386,7 +401,7 @@ def _main_multiplayer(ui_mode: str, args):
                         multiplayer=True,
                         is_server=True,
                         local_player_id=0,
-                        player_name=args.name,
+                        player_name=lobby_ui.nickname,
                         audio=lobby_ui.audio,
                     )
                     game.set_mp_player_names(player_names)
@@ -419,10 +434,10 @@ def _main_multiplayer(ui_mode: str, args):
             if action == "connect":
                 if 0 <= lobby_ui.selected_room < len(lobby_ui.rooms):
                     room = lobby_ui.rooms[lobby_ui.selected_room]
-                    client = GameClient(room["host"], room["port"], args.name)
+                    client = GameClient(room["host"], room["port"], lobby_ui.nickname)
                     if client.connect():
                         lobby_state = "lobby_wait"
-                        lobby_ui.status_text = f"Connected as {args.name}"
+                        lobby_ui.status_text = f"Connected as {lobby_ui.nickname}"
                     else:
                         lobby_ui.status_text = "Connection failed!"
                         client = None
@@ -478,7 +493,7 @@ def _main_multiplayer(ui_mode: str, args):
                         multiplayer=True,
                         is_server=False,
                         local_player_id=client.player_id,
-                        player_name=args.name,
+                        player_name=lobby_ui.nickname,
                         audio=lobby_ui.audio,
                     )
                     game.set_mp_player_names(player_names)

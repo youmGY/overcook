@@ -207,11 +207,13 @@ class GameServer:
 
     def __init__(self, host: str, port: int = NET_PORT,
                  max_players: int = NET_MAX_PLAYERS,
-                 room_name: str = "Cooking Room"):
+                 room_name: str = "Cooking Room",
+                 host_name: str = "Host"):
         self.host = host
         self.port = port
         self.max_players = max_players
         self.room_name = room_name
+        self.host_name = host_name
 
         self._server_sock: Optional[socket.socket] = None
         self._clients: List[_ClientSlot] = []
@@ -363,7 +365,7 @@ class GameServer:
 
     def get_lobby_info(self) -> dict:
         with self._lock:
-            players = [{"id": 0, "name": "Host", "ready": self.host_ready}]
+            players = [{"id": 0, "name": self.host_name, "ready": self.host_ready}]
             for c in self._clients:
                 if c.alive:
                     players.append({"id": c.player_id, "name": c.name, "ready": c.ready})

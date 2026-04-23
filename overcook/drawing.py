@@ -12,6 +12,7 @@ from .engine import screen, F, get_img
 from .constants import C, INGS
 from .utils import rr, txt
 from .entities import _load_completed_food_img
+from .ui.game_ui import load_leaderboard
 
 
 class GameDrawMixin:
@@ -42,21 +43,21 @@ class GameDrawMixin:
             s = F[12].render(msg, True, (190, 190, 210))
             screen.blit(s, (inner.centerx - s.get_width() // 2, inner.centery - s.get_height() // 2))
 
-        fps_bg = pygame.Surface((126, 38), pygame.SRCALPHA)
-        fps_bg.fill((0, 0, 0, 150))
-        screen.blit(fps_bg, (inner.x + 8, inner.y + 8))
-        game_fps_s = F[12].render(
-            f"Game {self._fps_label_text(self.game_fps)}",
-            True,
-            (255, 235, 190),
-        )
-        rec_fps_s = F[12].render(
-            f"Rec {self._fps_label_text(self.recognition_fps)}",
-            True,
-            (180, 235, 180),
-        )
-        screen.blit(game_fps_s, (inner.x + 14, inner.y + 12))
-        screen.blit(rec_fps_s, (inner.x + 14, inner.y + 28))
+        # fps_bg = pygame.Surface((126, 38), pygame.SRCALPHA)
+        # fps_bg.fill((0, 0, 0, 150))
+        # screen.blit(fps_bg, (inner.x + 8, inner.y + 8))
+        # game_fps_s = F[12].render(
+        #     f"Game {self._fps_label_text(self.game_fps)}",
+        #     True,
+        #     (255, 235, 190),
+        # )
+        # rec_fps_s = F[12].render(
+        #     f"Rec {self._fps_label_text(self.recognition_fps)}",
+        #     True,
+        #     (180, 235, 180),
+        # )
+        # screen.blit(game_fps_s, (inner.x + 14, inner.y + 12))
+        # screen.blit(rec_fps_s, (inner.x + 14, inner.y + 28))
 
     def _capture_camera_surface(self, w: int, h: int, pipeline_frame=None):
         # Use pipeline frame if available (gesture mode shares camera)
@@ -282,15 +283,15 @@ class GameDrawMixin:
         tm = F[24].render(f"{m}:{s:02d}", True, tc)
         screen.blit(tm, (gw // 2 - tm.get_width() // 2, HH // 2 - tm.get_height() // 2))
 
-        fps_s = F[12].render(
-            (
-                f"Game FPS {self._fps_label_text(self.game_fps)}"
-                f"  |  Rec FPS {self._fps_label_text(self.recognition_fps)}"
-            ),
-            True,
-            (210, 220, 235),
-        )
-        screen.blit(fps_s, (12, HH - fps_s.get_height() - 8))
+        # fps_s = F[12].render(
+        #     (
+        #         f"Game FPS {self._fps_label_text(self.game_fps)}"
+        #         f"  |  Rec FPS {self._fps_label_text(self.recognition_fps)}"
+        #     ),
+        #     True,
+        #     (210, 220, 235),
+        # )
+        # screen.blit(fps_s, (12, HH - fps_s.get_height() - 8))
 
         ox = gw - 8
         for o in reversed([o for o in self.orders if o.status == "active"]):
@@ -331,18 +332,67 @@ class GameDrawMixin:
         gw, gh = screen.get_size()
         ov = pygame.Surface((gw, gh), pygame.SRCALPHA)
         ov.fill((5, 5, 20, 210)); screen.blit(ov, (0, 0))
-        txt(screen, "Game Over!", 40, C["gold"], gw // 2, gh // 2 - 80)
-        txt(screen, f"{self.score} pts", 40, C["white"], gw // 2, gh // 2 - 20)
-        txt(screen, "Choose next action", 18, (150, 150, 200), gw // 2, gh // 2 + 20)
-        # Only show restart button to host (server)
-        if self.is_server:
+
+        if not self.multiplayer:
+            # Singleplay: centered layout with leaderboard
+            txt(screen, "Game Over!", 32, C["gold"], gw // 2, 70)
+            player_name = getattr(self, "player_name", "Player")
+            txt(screen, f"{player_name}  {self.score} pts", 24, C["white"], gw // 2, 110)
+            rows = min(len(load_leaderboard()), 8) or 1
+            lb_bottom = 140 + 44 + rows * 34 + 10
+            self._draw_leaderboard_panel(gw, gh)
+            # Position buttons below leaderboard
+            btn_y = lb_bottom + 16
+            bw = 180
+            self.btn_over_restart.x = gw // 2 - bw - 10
+            self.btn_over_restart.y = btn_y
+            self.btn_over_home.x = gw // 2 + 10
+            self.btn_over_home.y = btn_y
             self.btn_over_restart.draw(screen)
-        self.btn_over_home.draw(screen)
+            self.btn_over_home.draw(screen)
+        else:
+            txt(screen, "Game Over!", 40, C["gold"], gw // 2, gh // 2 - 80)
+            txt(screen, f"{self.score} pts", 40, C["white"], gw // 2, gh // 2 - 20)
+            txt(screen, "Choose next action", 18, (150, 150, 200), gw // 2, gh // 2 + 20)
+            if self.is_server:
+                self.btn_over_restart.draw(screen)
+            self.btn_over_home.draw(screen)
+
         self._record_frame()
         if self._record_stop_after_over_draws >= 0:
             self._record_stop_after_over_draws -= 1
             if self._record_stop_after_over_draws <= 0:
                 self._stop_recording("game_over_postscreen")
+
+    def _draw_leaderboard_panel(self, gw, gh):
+        entries = load_leaderboard()
+        pw = min(420, gw - 40)
+        rows = min(len(entries), 8) if entries else 1
+        ph = 44 + rows * 34 + 10
+        px, py = gw // 2 - pw // 2, 140
+        rr(screen, (15, 18, 40), (px, py, pw, ph), 12)
+        pygame.draw.rect(screen, (60, 80, 140), (px, py, pw, ph), 2, border_radius=12)
+        txt(screen, "Leaderboard", 18, C["gold"], px + pw // 2, py + 16)
+        if not entries:
+            txt(screen, "No scores yet!", 14, (150, 150, 180), px + pw // 2, py + 40)
+            return
+        player_name = getattr(self, "player_name", "Player")[:5]
+        for i, entry in enumerate(entries[:8]):
+            ey = py + 38 + i * 34
+            is_me = (entry["name"] == player_name and entry["score"] == self.score)
+            bg_col = (35, 70, 20) if is_me else (20, 25, 50)
+            rr(screen, bg_col, (px + 8, ey, pw - 16, 28), 6)
+            rank_col = C["gold"] if i == 0 else (180, 180, 180)
+            if 14 in F:
+                rs = F[14].render(f"#{i + 1}", True, rank_col)
+                ns = F[14].render(entry["name"], True, C["white"] if is_me else (210, 210, 210))
+                ss = F[14].render(f"{entry['score']} pts", True, C["gold"])
+                screen.blit(rs, (px + 14, ey + 6))
+                screen.blit(ns, (px + 50, ey + 6))
+                screen.blit(ss, (px + pw - ss.get_width() - 14, ey + 6))
+                if "date" in entry and 12 in F:
+                    ds = F[12].render(entry["date"], True, (110, 110, 150))
+                    screen.blit(ds, (px + 50 + ns.get_width() + 8, ey + 10))
 
     def draw_paused(self):
         self.draw()
