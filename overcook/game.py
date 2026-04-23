@@ -98,6 +98,8 @@ class Game(GameDrawMixin):
         # accidental slot jumps caused by hand transitioning out of chop/stir pose.
         self._move_blocked: bool = False
         self._game_bg_img = None
+        self._game_bg_scaled = None
+        self._game_bg_scaled_size: Optional[tuple[int, int]] = None
         self._load_game_bg()
 
         # Pause-screen recording state
@@ -107,6 +109,8 @@ class Game(GameDrawMixin):
         self._record_fps: int = 30
         self._recordings_dir = os.path.join(_ROOT, "recordings")
         self._record_stop_after_over_draws: int = -1
+        self._game_fps: float = 0.0
+        self._last_game_tick_at: Optional[float] = None
 
         if self.use_gesture:
             self._init_pipeline(
@@ -309,6 +313,8 @@ class Game(GameDrawMixin):
         self.timer = GAME_TIME
         self.orders = []; self.popups = []
         self.elapsed = 0.0; self.next_order = 15.0
+        self._game_fps = 0.0
+        self._last_game_tick_at = None
         self._build_level()
         gw, gh = screen.get_size()
         gy = self._gy()
@@ -861,6 +867,24 @@ class Game(GameDrawMixin):
         self.audio.play_bgm("play_loop")
         self._hurry_bgm_active = False
 
+    @property
+    def game_fps(self) -> float:
+        return self._game_fps
+
+    @property
+    def recognition_fps(self) -> Optional[float]:
+        if self._pipeline is None:
+            return None
+        return self._pipeline.fps
+
+    def _mark_game_tick(self) -> None:
+        now = time.perf_counter()
+        if self._last_game_tick_at is not None:
+            dt = now - self._last_game_tick_at
+            if dt > 0:
+                self._game_fps = 0.9 * self._game_fps + 0.1 * (1.0 / dt)
+        self._last_game_tick_at = now
+
     def _spawn_order(self):
         active = sum(1 for o in self.orders if o.status == "active")
         if active >= 3: return
@@ -951,6 +975,7 @@ class Game(GameDrawMixin):
         return triggered
 
     def update(self, dt, gi: "GameInput", mpos, mpressed):
+        self._mark_game_tick()
         gw, gh = screen.get_size()
         if gw != self.gw or gh != self.gh:
             self.gw, self.gh = gw, gh
@@ -1337,6 +1362,7 @@ class Game(GameDrawMixin):
 
     def server_tick(self, dt: float, all_inputs: dict):
         """Server: process one game tick with inputs from all players."""
+        self._mark_game_tick()
         if self.state != "play":  # H2: freeze when paused or over
             return
 

@@ -17,6 +17,11 @@ from .entities import _load_completed_food_img
 class GameDrawMixin:
     """Mixin that provides all draw/render methods for Game."""
 
+    def _fps_label_text(self, value) -> str:
+        if value is None or value <= 0:
+            return "--.-"
+        return f"{value:4.1f}"
+
     def _draw_camera_panel(self, pipeline_frame=None):
         if not self.use_camera_ui:
             return
@@ -36,6 +41,22 @@ class GameDrawMixin:
             msg = self._camera_error or "Camera not ready"
             s = F[12].render(msg, True, (190, 190, 210))
             screen.blit(s, (inner.centerx - s.get_width() // 2, inner.centery - s.get_height() // 2))
+
+        fps_bg = pygame.Surface((126, 38), pygame.SRCALPHA)
+        fps_bg.fill((0, 0, 0, 150))
+        screen.blit(fps_bg, (inner.x + 8, inner.y + 8))
+        game_fps_s = F[12].render(
+            f"Game {self._fps_label_text(self.game_fps)}",
+            True,
+            (255, 235, 190),
+        )
+        rec_fps_s = F[12].render(
+            f"Rec {self._fps_label_text(self.recognition_fps)}",
+            True,
+            (180, 235, 180),
+        )
+        screen.blit(game_fps_s, (inner.x + 14, inner.y + 12))
+        screen.blit(rec_fps_s, (inner.x + 14, inner.y + 28))
 
     def _capture_camera_surface(self, w: int, h: int, pipeline_frame=None):
         # Use pipeline frame if available (gesture mode shares camera)
@@ -83,8 +104,10 @@ class GameDrawMixin:
 
         screen.fill(C["bg"])
         if self._game_bg_img:
-            bg_scaled = pygame.transform.smoothscale(self._game_bg_img, (gw, gh))
-            screen.blit(bg_scaled, (0, 0))
+            if self._game_bg_scaled is None or self._game_bg_scaled_size != (gw, gh):
+                self._game_bg_scaled = pygame.transform.smoothscale(self._game_bg_img, (gw, gh))
+                self._game_bg_scaled_size = (gw, gh)
+            screen.blit(self._game_bg_scaled, (0, 0))
         else:
             for y in range(0, gh, 32):
                 pygame.draw.line(screen, (*C["grid"], 20), (0, y), (gw, y), 1)
@@ -255,6 +278,16 @@ class GameDrawMixin:
         tc = C["red"] if self.timer < 20 else C["white"]
         tm = F[24].render(f"{m}:{s:02d}", True, tc)
         screen.blit(tm, (gw // 2 - tm.get_width() // 2, HH // 2 - tm.get_height() // 2))
+
+        fps_s = F[12].render(
+            (
+                f"Game FPS {self._fps_label_text(self.game_fps)}"
+                f"  |  Rec FPS {self._fps_label_text(self.recognition_fps)}"
+            ),
+            True,
+            (210, 220, 235),
+        )
+        screen.blit(fps_s, (12, HH - fps_s.get_height() - 8))
 
         ox = gw - 8
         for o in reversed([o for o in self.orders if o.status == "active"]):
