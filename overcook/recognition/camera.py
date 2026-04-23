@@ -71,6 +71,7 @@ class ThreadedCamera:
         self._frame = None
         self._ok = False
         self._lock = threading.Lock()
+        self._new_frame_event = threading.Event()
         self._running = True
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
@@ -81,10 +82,17 @@ class ThreadedCamera:
             with self._lock:
                 self._ok = ok
                 self._frame = frame
+            self._new_frame_event.set()
 
     def read(self):
         with self._lock:
             return self._ok, self._frame
+
+    def wait_for_new_frame(self, timeout: float = 0.1) -> bool:
+        """Block until a new camera frame arrives, or timeout elapses."""
+        triggered = self._new_frame_event.wait(timeout=timeout)
+        self._new_frame_event.clear()
+        return triggered
 
     def release(self) -> None:
         self._running = False

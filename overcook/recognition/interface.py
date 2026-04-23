@@ -272,6 +272,7 @@ class ThreadedRecognitionPipeline:
         self._lock = threading.Lock()
         self._latest_hands: List[HandInput] = []
         self._latest_frame = None
+        self._seq: int = 0
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True, name="gesture-worker")
         self._thread.start()
@@ -287,19 +288,28 @@ class ThreadedRecognitionPipeline:
             with self._lock:
                 self._latest_hands = hands
                 self._latest_frame = frame
+                self._seq += 1
 
-    def get_latest(self) -> Tuple[List[HandInput], object]:
-        """최신 인식 결과를 블로킹 없이 반환."""
+    def get_latest(self) -> Tuple[int, List[HandInput], object]:
+        """(seq, hands, frame) 반환. seq가 이전과 같으면 중복 결과."""
         with self._lock:
-            return list(self._latest_hands), self._latest_frame
+            return self._seq, list(self._latest_hands), self._latest_frame
 
     @property
     def fps(self) -> float:
         return self._pipeline.fps
 
     @property
+    def last_frame(self):
+        with self._lock:
+            return self._latest_frame
+
+    @property
     def motion_debug(self) -> Dict[str, MotionDebug]:
         return self._pipeline.motion_debug
+
+    def reset_motion(self, hand: str = "right") -> None:
+        self._pipeline.reset_motion(hand)
 
     def close(self) -> None:
         self._stop_event.set()

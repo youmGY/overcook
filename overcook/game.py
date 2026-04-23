@@ -111,6 +111,7 @@ class Game(GameDrawMixin):
         self._record_stop_after_over_draws: int = -1
         self._game_fps: float = 0.0
         self._last_game_tick_at: Optional[float] = None
+        self._last_gesture_seq: int = -1
 
         if self.use_gesture:
             self._init_pipeline(
@@ -204,13 +205,13 @@ class Game(GameDrawMixin):
         try:
             from .recognition.camera import CameraConfig
             from .recognition.hand_tracker import HandTrackerConfig
-            from .recognition.interface import RecognitionPipeline
+            from .recognition.interface import RecognitionPipeline, ThreadedRecognitionPipeline
 
             fps = 60 if fast_motion else 30
             max_hands = 1
             min_det = 0.15 if fast_motion else 0.2
             min_track = 0.1
-            self._pipeline = RecognitionPipeline(
+            _base = RecognitionPipeline(
                 camera_cfg=CameraConfig(device_index=device, width=640, height=480, fps=fps),
                 hand_cfg=HandTrackerConfig(
                     max_num_hands=max_hands,
@@ -224,19 +225,26 @@ class Game(GameDrawMixin):
                 clahe_clip=clahe_clip,
                 clahe_grid=clahe_grid,
             )
-            log.info("Gesture pipeline init: fast=%s clahe=%s device=%s", fast_motion, clahe, device)
+            self._pipeline = ThreadedRecognitionPipeline(_base)
+            log.info("Gesture pipeline init (threaded): fast=%s clahe=%s device=%s", fast_motion, clahe, device)
         except Exception as e:
             log.error("Failed to init gesture pipeline: %s", e)
             self._camera_error = f"Pipeline init failed: {e}"
             self._pipeline = None
 
     def gesture_step(self):
-        """Run one recognition step and return (List[HandInput], frame_or_None)."""
+        """Return (hands, frame, is_new_data) without blocking the game loop.
+
+        is_new_data=False이면 같은 인식 프레임이 재사용된 것이므로
+        thumbs_up cooldown 등 상태를 초기화하면 안 된다.
+        """
         if self._pipeline is None:
-            return [], None
-        hands = self._pipeline.step(draw_overlay=True)
-        frame = self._pipeline.last_frame
-        return hands, frame
+            return [], None, False
+        seq, hands, frame = self._pipeline.get_latest()
+        if seq == self._last_gesture_seq:
+            return [], frame, False
+        self._last_gesture_seq = seq
+        return hands, frame, True
 
     def shutdown(self):
         self._stop_recording("shutdown")

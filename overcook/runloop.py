@@ -19,7 +19,7 @@ def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) ->
     pipeline_frame = None
     gesture_gi = GameInput()
     if game.use_gesture:
-        hand_inputs, pipeline_frame = game.gesture_step()
+        hand_inputs, pipeline_frame, _is_new = game.gesture_step()
         if hand_inputs:
             local_overlay = game._player_overlays.get(game.local_player_id, False)
             any_thumbs_up = any(
@@ -36,8 +36,10 @@ def _collect_local_input(game, held, _gi_frame, station_click, overlay_click) ->
             if not game._station_shortcuts_enabled():
                 gesture_gi.move_to_slot = None
             game._thumbs_up_held = any_thumbs_up
-        else:
+        elif _is_new:
+            # 새 인식 프레임에 손이 없음 → cooldown 해제
             game._thumbs_up_held = False
+        # else: 같은 seq 재사용 → _thumbs_up_held 유지 (깜빡임 방지)
 
     move_dir = 0
     if held["left"]:
