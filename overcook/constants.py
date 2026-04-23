@@ -67,7 +67,7 @@ COOK_TIME  = 5.0
 CHOP_TIME  = 3.0
 CHOP_ACTIONS = 4
 STIR_ACTIONS = 5
-ORDER_TIME = 50.0
+ORDER_TIME = 60.0
 GAME_TIME  = 120.0
 
 # How many extra stirs beyond STIR_ACTIONS before the dish burns.
