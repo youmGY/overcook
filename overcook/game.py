@@ -887,10 +887,16 @@ class Game(GameDrawMixin):
 
     def _mark_game_tick(self) -> None:
         now = time.perf_counter()
-        if self._last_game_tick_at is not None:
-            dt = now - self._last_game_tick_at
-            if dt > 0:
-                self._game_fps = 0.9 * self._game_fps + 0.1 * (1.0 / dt)
+        if self._last_game_tick_at is None:
+            self._last_game_tick_at = now
+            return
+
+        dt = now - self._last_game_tick_at
+        # Ignore intra-frame calls to avoid huge FPS spikes (e.g. 1000+).
+        if dt < (1.0 / 240.0):
+            return
+
+        self._game_fps = 0.9 * self._game_fps + 0.1 * (1.0 / dt)
         self._last_game_tick_at = now
 
     def _spawn_order(self):

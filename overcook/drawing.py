@@ -99,6 +99,9 @@ class GameDrawMixin:
         return pygame.surfarray.make_surface(frame)
 
     def draw(self, pipeline_frame=None):
+        if self.multiplayer and not self.is_server:
+            # Client path does not run server_tick(), so sample FPS on render.
+            self._mark_game_tick()
         gw, gh = screen.get_size()
         gy = self._gy()
 
