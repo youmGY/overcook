@@ -147,6 +147,20 @@ class KoreanComposer:
         self._cho = self._jung = self._jong = None
 
 
+# 두벌식 QWERTY → 자모 매핑
+_QWERTY_TO_JAMO = {
+    'q':'ㅂ','w':'ㅈ','e':'ㄷ','r':'ㄱ','t':'ㅅ',
+    'y':'ㅛ','u':'ㅕ','i':'ㅑ','o':'ㅐ','p':'ㅔ',
+    'a':'ㅁ','s':'ㄴ','d':'ㅇ','f':'ㄹ','g':'ㅎ',
+    'h':'ㅗ','j':'ㅓ','k':'ㅏ','l':'ㅣ',
+    'z':'ㅋ','x':'ㅌ','c':'ㅊ','v':'ㅍ',
+    'b':'ㅠ','n':'ㅜ','m':'ㅡ',
+    # shift 쌍자음/이중모음
+    'Q':'ㅃ','W':'ㅉ','E':'ㄸ','R':'ㄲ','T':'ㅆ',
+    'O':'ㅒ','P':'ㅖ',
+}
+
+
 class LobbyUI:
     """Manages lobby state and rendering."""
 
@@ -324,7 +338,7 @@ class LobbyUI:
         return self.settings_overlay.handle_mousedown(mpos)
 
     def _handle_vk_key(self, key: str):
-        if key == "⌫":
+        if key == "__DEL__":
             self._korean_composer.backspace()
         elif key == "__OK__":
             self._confirm_nickname()
@@ -357,9 +371,17 @@ class LobbyUI:
             self._korean_composer.backspace()
         elif event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
             self._vk_shift = not self._vk_shift
+        elif (event.key in (0xff31, 0x0138, 0x40000156, 0x40000090)  # XK_Hangul, SDL1, SDLK_LANG1(SDL2), 한영키
+              or event.key == getattr(pygame, 'K_HANGUL', -1)
+              or event.key == getattr(pygame, 'K_RALT', -1)):
+            # 한/영 키
+            self._vk_lang = "EN" if self._vk_lang == "KR" else "KR"
+            self._vk_shift = False
         else:
             ch = event.unicode
             if ch:
+                if self._vk_lang == "KR":
+                    ch = _QWERTY_TO_JAMO.get(ch, ch)
                 self._process_char_input(ch)
         return True
 
@@ -484,22 +506,22 @@ class LobbyUI:
         KR_ROWS = [
             ['ㅂ','ㅈ','ㄷ','ㄱ','ㅅ','ㅛ','ㅕ','ㅑ','ㅐ','ㅔ'],
             ['ㅁ','ㄴ','ㅇ','ㄹ','ㅎ','ㅗ','ㅓ','ㅏ','ㅣ'],
-            ['__SHIFT__','ㅋ','ㅌ','ㅊ','ㅍ','ㅠ','ㅜ','ㅡ','⌫'],
+            ['__SHIFT__','ㅋ','ㅌ','ㅊ','ㅍ','ㅠ','ㅜ','ㅡ','__DEL__'],
         ]
         KR_ROWS_SHIFT = [
             ['ㅃ','ㅉ','ㄸ','ㄲ','ㅆ','ㅛ','ㅕ','ㅑ','ㅒ','ㅖ'],
             ['ㅁ','ㄴ','ㅇ','ㄹ','ㅎ','ㅗ','ㅓ','ㅏ','ㅣ'],
-            ['__SHIFT__','ㅋ','ㅌ','ㅊ','ㅍ','ㅠ','ㅜ','ㅡ','⌫'],
+            ['__SHIFT__','ㅋ','ㅌ','ㅊ','ㅍ','ㅠ','ㅜ','ㅡ','__DEL__'],
         ]
         EN_ROWS = [
             list('qwertyuiop'),
             list('asdfghjkl'),
-            ['__SHIFT__'] + list('zxcvbnm') + ['⌫'],
+            ['__SHIFT__'] + list('zxcvbnm') + ['__DEL__'],
         ]
         EN_ROWS_SHIFT = [
             list('QWERTYUIOP'),
             list('ASDFGHJKL'),
-            ['__SHIFT__'] + list('ZXCVBNM') + ['⌫'],
+            ['__SHIFT__'] + list('ZXCVBNM') + ['__DEL__'],
         ]
         if self._vk_lang == "KR":
             rows = KR_ROWS_SHIFT if self._vk_shift else KR_ROWS
@@ -513,7 +535,7 @@ class LobbyUI:
             key_w = (row_w_total - key_gap * (n - 1)) // n
             rx = gw // 2 - row_w_total // 2
             for key in row:
-                is_del   = key == "⌫"
+                is_del   = key == "__DEL__"
                 is_shift = key == "__SHIFT__"
                 bg_color = (70, 35, 35) if is_del else \
                            ((80, 80, 30) if (is_shift and self._vk_shift) else \
