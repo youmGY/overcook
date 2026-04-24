@@ -1,3 +1,4 @@
+import sys
 import pygame
 import json
 import os
@@ -273,7 +274,7 @@ class IngredientOverlay:
 
 
 class SettingsOverlay:
-    PANEL_W, PANEL_H = 420, 320
+    PANEL_W, PANEL_H = 420, 400
 
     def __init__(self, audio):
         self.audio = audio
@@ -307,12 +308,14 @@ class SettingsOverlay:
         bgm_track = pygame.Rect(px + 70, py + 90, track_w, 8)
         sfx_track = pygame.Rect(px + 70, py + 165, track_w, 8)
         amateur_rect = pygame.Rect(px + 20, py + 220, self.PANEL_W - 40, 40)
-        close_rect = pygame.Rect(cx - 55, py + self.PANEL_H - 52, 110, 38)
-        return px, py, bgm_track, sfx_track, amateur_rect, close_rect
+        close_rect = pygame.Rect(cx - 55, py + self.PANEL_H - 132, 110, 38)
+        quit_rect = pygame.Rect(cx - 55, py + self.PANEL_H - 52, 110, 38)
+        return px, py, bgm_track, sfx_track, amateur_rect, close_rect, quit_rect
 
     def _panel_rect(self):
         px, py, *_ = self._rects()
         return pygame.Rect(px, py, self.PANEL_W, self.PANEL_H)
+
 
     def _vol_from_mouse(self, mpos, track):
         return max(0.0, min(1.0, (mpos[0] - track.x) / track.w))
@@ -320,12 +323,16 @@ class SettingsOverlay:
     def handle_mousedown(self, mpos):
         if not self.active:
             return False
-        px, py, bgm_track, sfx_track, amateur_rect, close_rect = self._rects()
+        px, py, bgm_track, sfx_track, amateur_rect, close_rect, quit_rect = self._rects()
         if not self._panel_rect().collidepoint(mpos):
             self.active = False
             return True
         if close_rect.collidepoint(mpos):
             self.active = False
+            return True
+        if quit_rect.collidepoint(mpos):
+            pygame.quit()
+            sys.exit()
             return True
         if amateur_rect.collidepoint(mpos):
             self.amateur_mode = not self.amateur_mode
@@ -349,7 +356,7 @@ class SettingsOverlay:
     def handle_mousemove(self, mpos):
         if not self._dragging:
             return
-        _, _, bgm_track, sfx_track, _, _ = self._rects()
+        _, _, bgm_track, sfx_track, _, _, _ = self._rects()
         if self._dragging == "bgm":
             self.audio.set_bgm_volume(self._vol_from_mouse(mpos, bgm_track))
         else:
@@ -375,7 +382,7 @@ class SettingsOverlay:
         ov.fill((0, 0, 0, 160))
         surf.blit(ov, (0, 0))
 
-        px, py, bgm_track, sfx_track, amateur_rect, close_rect = self._rects()
+        px, py, bgm_track, sfx_track, amateur_rect, close_rect, quit_rect = self._rects()
         rr(surf, (18, 22, 52), (px, py, self.PANEL_W, self.PANEL_H), 14)
         pygame.draw.rect(surf, (70, 60, 150), (px, py, self.PANEL_W, self.PANEL_H), 2, border_radius=14)
 
@@ -405,3 +412,10 @@ class SettingsOverlay:
         col = (60, 130, 80) if close_rect.collidepoint(mpos) else (40, 100, 60)
         rr(surf, col, close_rect, 8)
         txt(surf, "Close", 14, C["white"], close_rect.centerx, close_rect.centery)
+
+        pygame.draw.line(surf, (80, 40, 40),
+                         (px + 20, quit_rect.y - 18), (px + self.PANEL_W - 20, quit_rect.y - 18), 1)
+        q_col = (180, 50, 50) if quit_rect.collidepoint(mpos) else (120, 30, 30)
+        rr(surf, q_col, quit_rect, 8)
+        pygame.draw.rect(surf, (200, 80, 80), quit_rect, 1, border_radius=8)
+        txt(surf, "Quit Game", 14, C["white"], quit_rect.centerx, quit_rect.centery)
